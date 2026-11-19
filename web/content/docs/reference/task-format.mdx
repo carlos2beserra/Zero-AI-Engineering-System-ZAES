@@ -1,0 +1,288 @@
+---
+title: "Formato de Task (TASK-NNN.md)"
+description: "Documentação campo a campo do formato de task file do MAES — paths atualizados para .maes/tasks/."
+---
+
+## Por que o Formato é Padronizado
+
+Um task file padronizado serve três propósitos simultâneos:
+
+1. **Para o dev:** força clareza antes de iniciar — objetivo, escopo, contratos e critérios definidos antes de codar
+2. **Para a IA:** fornece contexto estruturado sobre o objetivo, evitando ambiguidades e scope creep
+3. **Para a automação:** `maes explain context --task TASK-NNN` usa os metadados para gerar o contexto relevante; o eval de PR em CI (`eval-pr.py --task TASK-NNN.md`) usa o task file como referência ao pontuar o diff
+
+---
+
+## Localização dos Task Files
+
+**Path:** `.maes/tasks/TASK-NNN.md`
+
+O template em branco está em `.maes/tasks/TASK_TEMPLATE.md` (gerado por `maes init`). Crie um novo task file copiando o template:
+
+```bash
+cp .maes/tasks/TASK_TEMPLATE.md .maes/tasks/TASK-042.md
+```
+
+---
+
+## Estrutura Completa
+
+```
+TASK-NNN.md
+│
+├── Header (metadados)
+│   ├── Tipo
+│   ├── Prioridade
+│   ├── Estimativa
+│   ├── Desenvolvedor
+│   ├── Data de criação
+│   └── Status
+│
+├── Objetivo
+├── Contexto
+├── Escopo (in / out)
+├── Contratos Afetados
+├── Requisitos Técnicos
+├── Critérios de Aceite
+├── Notas e Considerações
+└── Log de Progresso
+```
+
+---
+
+## Campo a Campo
+
+### Header
+
+```markdown
+> **Tipo:** Feature / Bug / Refactor / Performance / Security / Docs / Chore
+> **Prioridade:** Alta / Média / Baixa
+> **Estimativa:** [Xh / Xd]
+> **Desenvolvedor:** [Nome]
+> **Data de criação:** [YYYY-MM-DD]
+> **Status:** Backlog / Em progresso / Em revisão / Concluído
+```
+
+**Tipo:**
+- `Feature` — nova funcionalidade para o usuário
+- `Bug` — correção de comportamento incorreto
+- `Refactor` — melhoria interna sem mudança de comportamento externo
+- `Performance` — melhoria de desempenho
+- `Security` — correção ou melhoria de segurança
+- `Docs` — atualização de documentação apenas
+- `Chore` — manutenção: deps, CI, config
+
+---
+
+### Objetivo
+
+```markdown
+## Objetivo
+Implementar `POST /v1/users` para registro de novos usuários com validação de e-mail único,
+hash seguro de senha e publicação do evento `user.registered`.
+```
+
+**Regra:** Uma frase. Deve ser compreensível por alguém sem contexto. Se precisar de mais de uma frase, o objetivo está ambíguo — ou é uma task maior que deveria ser quebrada.
+
+Um objetivo bem escrito também ajuda o eval de PR em CI: quando o diff é avaliado com `eval-pr.py --task TASK-NNN.md`, o Objetivo entra como referência do que o PR deveria entregar.
+
+---
+
+### Contexto
+
+```markdown
+## Contexto
+O fluxo de onboarding requer que usuários criem conta antes de acessar qualquer recurso.
+Sem este endpoint, o frontend não consegue iniciar o fluxo de cadastro.
+```
+
+**O que incluir:** Por que a task existe. Qual problema de negócio ou técnico ela resolve. Quais outras tasks dependem dela.
+
+**Por que importa para a IA:** A IA usa o contexto de negócio para priorizar decisões de design. Com "sem isso o onboarding não funciona", ela entende que disponibilidade e tratamento de erros são críticos.
+
+---
+
+### Escopo
+
+```markdown
+## Escopo
+
+### O que está incluído (in scope)
+- [ ] `POST /v1/users` — criação de conta
+- [ ] Validação: e-mail único, senha mínimo 8 caracteres, nome obrigatório
+- [ ] Hash de senha com bcrypt (rounds: 12)
+
+### O que NÃO está incluído (out of scope)
+- Login / autenticação (TASK-002)
+- Verificação de e-mail por link (TASK-003)
+- Upload de avatar (TASK-010)
+```
+
+**Regra:** O out-of-scope é tão importante quanto o in-scope. Ele previne scope creep e diz explicitamente à IA o que não implementar.
+
+**Checkboxes:** Use `[ ]` para itens pendentes e `[x]` para concluídos.
+
+---
+
+### Contratos Afetados
+
+```markdown
+## Contratos Afetados
+| Tipo | Nome | Mudança |
+|---|---|---|
+| Endpoint | `POST /v1/users` | Novo |
+| Schema | `users` table | Nova tabela |
+| Event | `user.registered` | Novo |
+| Interface | `UserRepository` | Novo: `findByEmail`, `save` |
+```
+
+**Tipos válidos:**
+- `Endpoint` — API REST ou GraphQL
+- `Schema` — tabela ou coleção no banco
+- `Event` — mensagem em fila ou event bus
+- `Interface` — interface ou tipo compartilhado entre módulos
+- `Config` — variável de ambiente ou configuração
+- `Migration` — migration de banco
+
+Esta seção força você a pensar em impacto antes de implementar. O compilador MAES pode usar os contratos afetados para selecionar assertions relevantes em `maes explain context --task TASK-NNN`.
+
+---
+
+### Requisitos Técnicos
+
+```markdown
+## Requisitos Técnicos
+
+### Dados de entrada
+```typescript
+interface CreateUserInput {
+  email: string    // obrigatório, único, formato válido
+  password: string // obrigatório, mínimo 8 caracteres
+  name: string     // obrigatório, mínimo 2 caracteres
+}
+```
+
+### Dados de saída / Comportamento esperado
+```typescript
+// 201 Created
+interface CreateUserResponse {
+  id: string       // UUID v4
+  email: string
+  name: string
+  createdAt: string // ISO 8601
+}
+
+// Casos de erro
+// 409 Conflict     → e-mail já cadastrado
+// 400 Bad Request  → validação falhou
+// 500              → erro interno (nunca expor detalhes)
+```
+
+### Regras de negócio aplicáveis
+- E-mail é imutável após criação
+- Senha nunca é retornada em nenhuma response
+```
+
+**O que incluir:**
+- Tipos de entrada (interfaces TypeScript, structs Go, dataclasses Python)
+- Tipos de saída com todos os casos de sucesso e erro
+- HTTP status codes explícitos para cada caso de erro
+- Regras de negócio do domínio relevantes para esta implementação
+
+A IA usa exatamente estas definições. Interfaces definidas aqui aparecem diretamente no código gerado.
+
+---
+
+### Critérios de Aceite
+
+```markdown
+## Critérios de Aceite
+- [ ] `POST /v1/users` retorna 201 com body correto para input válido
+- [ ] Retorna 409 quando e-mail já existe
+- [ ] Retorna 400 para cada caso de validação inválida
+- [ ] Senha não aparece em nenhuma response ou log
+- [ ] Evento `user.registered` publicado após persistência
+- [ ] Testes unitários: service (validação, hash, save, evento)
+- [ ] Testes de integração: 201, 409, 400 (3 casos mínimos)
+- [ ] Self-review com IA realizado
+- [ ] Code review aprovado
+```
+
+**Regra:** Cada critério deve ser verificável sem ambiguidade. "Implementado corretamente" não é critério. "Retorna 409 quando e-mail já existe" é critério.
+
+**Como o eval de PR usa esses critérios:** quando o diff é avaliado com `eval-pr.py --task TASK-NNN.md`, o LLM-as-judge recebe os critérios de aceite como referência ao pontuar o PR contra o rubric.
+
+---
+
+### Notas e Considerações
+
+```markdown
+## Notas e Considerações
+- **Depende de:** Infraestrutura de banco configurada (migration base já executada)
+- **Bloqueia:** TASK-002 (login), TASK-003 (verificação de e-mail)
+- **Riscos:** bcrypt síncrono — usar `bcrypt.hash()` async, rounds=12
+- **Notas:** A tabela `users` não existia antes desta task. A migration deve ser incluída no PR.
+```
+
+**O que incluir:**
+- Dependências de outras tasks ou infraestrutura
+- Quais tasks esta bloqueia
+- Riscos técnicos conhecidos
+- Decisões específicas que precisam ser feitas na implementação
+
+---
+
+### Log de Progresso
+
+```markdown
+## Log de Progresso
+| Data | Evento |
+|---|---|
+| 2026-05-22 | Task criada |
+| 2026-05-22 | Implementação iniciada |
+| 2026-05-22 | Código gerado, self-review realizado |
+| 2026-05-22 | Testes passando, PR aberto #142 |
+| 2026-05-22 | Code review aprovado, merged |
+```
+
+**Quando atualizar:** A cada evento significativo — início, marcos, PR aberto, merged.
+
+---
+
+## Campos Obrigatórios vs. Opcionais
+
+| Campo | Obrigatoriedade |
+|---|---|
+| Tipo, Prioridade, Desenvolvedor | Obrigatório |
+| Objetivo | Obrigatório |
+| Escopo (in + out) | Obrigatório |
+| Contratos Afetados | Obrigatório |
+| Requisitos Técnicos (entrada/saída) | Obrigatório |
+| Critérios de Aceite | Obrigatório |
+| Estimativa | Recomendado |
+| Notas e Considerações | Opcional |
+| Log de Progresso | Recomendado |
+
+Para tasks menores que 2 horas (micro-tasks): Estimativa e Log de Progresso podem ser omitidos. Todos os outros campos permanecem obrigatórios.
+
+---
+
+## Integrações com o CLI
+
+**Contexto relevante para a task:**
+
+```bash
+maes explain context --agent backend-engineer --task TASK-042
+```
+
+Mostra quais assertions do hot context e do warm context são relevantes para a task, com base nos contratos afetados e no objetivo declarado.
+
+**Eval de PR usando a task como referência:**
+
+```bash
+git diff origin/main...HEAD | python scripts/ci/eval-pr.py --stdin --task .maes/tasks/TASK-042.md
+```
+
+Avalia o diff do PR contra o rubric de `.maes/evals/eval-rules.md`, usando o task file como referência do que deveria ser entregue, e retorna score 0–14 + verdict. É o mesmo script que o workflow `maes-eval.yml` roda automaticamente em PRs.
+
+> Para medir o impacto do **contexto** (com vs sem MAES), o caminho é outro: o agent `/maes-eval`, que roda cenários `.eval.yaml` — arquivos separados dos task files. Veja [Evals](/docs/reference/prompts).

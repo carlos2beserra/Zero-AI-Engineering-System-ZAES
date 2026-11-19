@@ -1,0 +1,59 @@
+---
+title: /maes-analyze
+description: Diagnóstico de gaps na Context Layer — o que falta, o que está vencido, o que diverge do código.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+`/maes-analyze` é o **agente diagnóstico** do MAES. Ele lê toda a Context
+Layer + o estado atual do código e produz um relatório de **gaps** —
+informações ausentes, desatualizadas ou divergentes.
+
+## Quando usar
+
+- **Onboarding inicial** — depois de `maes init`, descobrir o que falta capturar.
+- **Auditoria periódica** — quinzenal/mensal, antes de planning.
+- **Após PR grande** — checar se decisões implícitas no diff deveriam virar
+  `decisions.md`.
+
+## Como invocar
+
+| Cliente             | Comando                                   |
+| ------------------- | ----------------------------------------- |
+| Claude Desktop/Code | `/maes-analyze`                           |
+| GitHub Copilot      | `/maes-analyze`                           |
+| Cursor              | `@maes-analyze`                           |
+| Continue            | Auto-carregado — peça "rode maes-analyze" |
+| Windsurf Cascade    | Auto-carregado — peça "rode maes-analyze" |
+
+## O que ele faz
+
+1. Lê `.maes/context/human/*` e `.maes/context/inferred/*`.
+2. Cruza com o código atual (módulos, dependências, contratos detectados).
+3. Identifica:
+   - **Lacunas**: módulos sem dono em `OWNERSHIP.yaml`, decisões sem ADR.
+   - **Staleness**: arquivos vencidos por prazo de revisão.
+   - **Divergências**: código que contradiz `decisions.md`.
+4. Sugere o próximo `/maes-context-add` para preencher cada gap.
+
+## Saída típica
+
+```text
+📋 Diagnóstico da Context Layer
+
+❗ Gaps críticos (3)
+  - Módulo `billing/` sem owner em OWNERSHIP.yaml
+  - decisions.md não menciona o novo provider de pagamento (PR #142)
+  - human/security.md vencido há 47 dias
+
+⚠️ Gaps médios (5)
+  - integrations.md sem exemplo do webhook de retry
+  ...
+
+✅ Para corrigir, rode /maes-context-add com este relatório.
+```
+
+## Próximos passos
+
+- [/maes-context-add](/docs/agents/maes-context-add)
+- [Catálogo de agents](/docs/agents/catalog)

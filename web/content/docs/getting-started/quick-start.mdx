@@ -1,0 +1,187 @@
+---
+title: Quickstart
+description: Do repositório sem contexto ao CLAUDE.md gerado e validado. A análise por IA roda via agente externo (/maes-analyze) e leva 2–5 minutos.
+---
+
+## Por que você está aqui
+
+Seu time usa IA todo dia. E ainda assim o agent:
+
+- Reimplementa padrões que vocês já rejeitaram.
+- Ignora decisões arquiteturais não documentadas.
+- Quebra contratos com times vizinhos.
+- Produz código que **passa nos testes** mas não é o que vocês escreveriam.
+
+A causa raiz não é o modelo. É **falta de contexto humano versionado**.
+([leia o porquê em detalhe](/docs/foundations/why-maes-exists))
+
+## O que MAES entrega ao final deste guia
+
+- `.maes/context/human/` versionado no repo — decisões, compliance, contratos.
+- `.maes/context/inferred/` populado pelo agent `/maes-analyze`.
+- Adapters gerados para Claude Code, Cursor, Copilot, Continue, Windsurf.
+- `maes validate` rodando em CI bloqueando merge quando contexto está vencido.
+
+Tempo estimado: 5–10 minutos de CLI + 2–5 minutos de análise via agent.
+
+## Pré-condições
+
+Antes de começar, verifique:
+
+- MAES instalado (`maes doctor` retorna OK)
+- Você está na raiz de um repositório git
+
+## Passo 1 — Inicializar o projeto
+
+```bash
+cd seu-projeto
+maes init
+```
+
+O `maes init` é um comando determinístico que faz o scaffold da estrutura `.maes/` e instala os agentes nos clientes de IA detectados:
+
+```
+[OK] .maes/ criado (config.yaml, OWNERSHIP.yaml, context/human/*.md placeholders)
+[OK] Agentes core instalados (.claude/commands/, .cursor/commands/, ...):
+     /maes-review, /maes-analyze, /maes-context-add, /maes-eval
+[OK] Workflows de CI copiados para .github/workflows/
+```
+
+## Passo 2 — Rodar o agente `maes-analyze`
+
+Abra seu cliente de IA na raiz do projeto e invoque o agente conforme o cliente detectado por `maes init`:
+
+| Cliente               | Como invocar                                      |
+| --------------------- | ------------------------------------------------- |
+| Claude (Desktop/Code) | `/maes-analyze` (slash command)                   |
+| GitHub Copilot        | `/maes-analyze` (slash command)                   |
+| Cursor                | `@maes-analyze` (@ mention)                       |
+| Continue              | auto-loaded — apenas descreva a tarefa de análise |
+| Windsurf Cascade      | auto-loaded — apenas descreva a tarefa de análise |
+
+O agente lê o repositório, detecta stack/módulos/gaps e popula `context/inferred/` com:
+
+- `gaps.json` — erros prováveis da IA detectados
+- `patterns.json` — padrões de código identificados
+- `data-model.json` — schema inferido
+- `stack.json` — stack tecnológica detectada
+- `modules.json` — mapa de módulos
+
+## Passo 3 — Compilar o contexto
+
+```bash
+maes sync
+```
+
+O `maes sync` é determinístico: compila `context/human/` + `context/inferred/` nos arquivos adapter de cada IDE detectada.
+
+```
+.maes/
+├── config.yaml
+├── OWNERSHIP.yaml
+├── context/
+│   ├── inferred/              ← preenchido pelo agente /maes-analyze
+│   └── human/
+│       ├── compliance.md      ← placeholder — preencher com regras reais
+│       ├── integrations.md    ← placeholder
+│       ├── decisions.md       ← placeholder — adicionar ADRs (DEC-001...)
+│       ├── business-rules.md  ← placeholder
+│       └── principles.md      ← placeholder
+└── synthesis/
+    ├── guards.json
+    ├── anti-hallucination.json
+    ├── conflicts.json
+    └── staleness.json
+```
+
+Na raiz do repositório, os adapters foram gerados:
+
+```
+CLAUDE.md                          ← carregado pelo Claude Code
+.claude/commands/                  ← slash commands para Claude Code
+.cursor/rules/maes-context.mdc     ← carregado pelo Cursor (se detectado)
+.continue/rules/maes-context.md    ← carregado pelo Continue (se detectado)
+.windsurfrules                     ← carregado pelo Windsurf (se detectado)
+.github/copilot-instructions.md    ← carregado pelo GitHub Copilot
+```
+
+<Callout type="warn">
+**Configure o `.gitignore` para versionar os commands:** Muitos projetos ignoram `.claude/` inteiro (settings locais, worktrees). O MAES gera os slash commands em `.claude/commands/` e esses arquivos devem ser versionados para o time todo ter acesso. Se o seu `.gitignore` já contém `.claude/`, substitua por:
+
+```gitignore
+.claude/*
+!.claude/commands/
+```
+
+A primeira linha ignora tudo dentro de `.claude/` (settings, worktrees, etc.). A segunda re-inclui apenas `commands/` e seu conteúdo. O MAES não modifica o `.gitignore` do seu projeto automaticamente para não sobrescrever configurações existentes.
+
+</Callout>
+
+## Passo 4 — Ver o `CLAUDE.md` gerado
+
+```bash
+cat CLAUDE.md
+```
+
+O arquivo começa com o contexto Hot (layers 1–3, ≤ 800 tokens) e continua com o contexto Warm. Exemplo de trecho gerado:
+
+```markdown
+# Contexto do Projeto — my-api
+
+## Compliance e Segurança
+
+- Dados de CPF e CNPJ são PII — nunca logar, nunca expor em erros
+- Tokens de autenticação não podem ser persistidos em banco
+
+## Contratos Externos
+
+- Integração com ERP via webhook POST /erp/orders — não modificar payload sem atualizar integrations.md
+- SLA de resposta: endpoints críticos ≤ 200ms p95
+
+## Padrões Detectados (inferidos)
+
+- Validação de CPF usa lib `cpf-cnpj-validator` — não substituir por regex
+- Soft-delete não aplicado em tabelas de auditoria (audit_logs, payment_events)
+```
+
+O conteúdo varia conforme o que o agente `/maes-analyze` detectou no repositório.
+
+## Passo 5 — Verificar com `maes doctor`
+
+```bash
+maes doctor
+```
+
+Com um repositório inicializado, o `maes doctor` verifica o estado do contexto:
+
+```
+[OK] Python 3.13.x
+[OK] maes 1.0.0
+[OK] .maes/ encontrado
+[OK] context/inferred/ populado (5 arquivos)
+[OK] synthesis/ compilado
+[WARN] context/human/compliance.md — ainda tem placeholders
+[WARN] context/human/business-rules.md — ainda tem placeholders
+[OK] CLAUDE.md gerado
+[OK] .github/copilot-instructions.md gerado
+```
+
+Os `[WARN]` nos arquivos `human/` são esperados nesse ponto — o init cria a estrutura, mas o time precisa preencher o conteúdo real.
+
+## Passo 6 — Adicionar contexto humano real
+
+Este é o passo mais importante. O agente `/maes-analyze` detectou padrões do código, mas não sabe das regras que existem nas cabeças do time — compliance, decisões arquiteturais, invariantes de negócio. Sem isso, a IA vai trabalhar só com o que conseguiu inferir.
+
+Você tem duas formas de preencher:
+
+1. **Manual** — editar os arquivos em `.maes/context/human/*.md` diretamente.
+2. **Agente `/maes-context-add`** — invocar o agente para extrair regras de docs existentes (CLAUDE.md legado, ADRs, RFCs, etc.) e rotear automaticamente para o arquivo correto.
+
+Depois de editar, rode `maes sync` novamente para recompilar os adapters.
+
+<Callout type="info">
+  **Por onde começar?** Preencha `compliance.md` e `business-rules.md` primeiro
+  — são os que mais impactam o comportamento da IA (layers 1-2 e layer 5, sempre
+  no hot context). `decisions.md` e `principles.md` podem ser preenchidos
+  gradualmente ao longo do trabalho normal.
+</Callout>

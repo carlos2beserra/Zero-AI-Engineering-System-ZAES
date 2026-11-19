@@ -1,0 +1,66 @@
+---
+title: Documentation Layer
+description: Os adapters por cliente — CLAUDE.md, .cursor/rules/, .github/instructions/, .windsurfrules, .continue/rules/ — gerados a partir do contexto compilado.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+A **Documentation Layer** é a camada que materializa o contexto compilado
+no **formato nativo de cada cliente de IA**. Ela é produzida pelo último
+estágio do Compiler e nunca deve ser editada à mão.
+
+## Adapters gerados
+
+| Cliente          | Arquivo / pasta gerado                                       | Carregamento       |
+| ---------------- | ------------------------------------------------------------ | ------------------ |
+| Claude Code      | `CLAUDE.md`                                                  | Automático na raiz |
+| Cursor           | `.cursor/rules/*.mdc`                                        | Automático         |
+| GitHub Copilot   | `.github/copilot-instructions.md` + `.github/instructions/*` | Automático         |
+| Windsurf Cascade | `.windsurfrules`                                             | Automático         |
+| Continue         | `.continue/rules/*.md`                                       | Automático         |
+
+Todos materializam **a mesma fonte de verdade** — a Context Layer — no
+formato que cada cliente espera.
+
+## Por que ter adapters?
+
+Cada cliente carrega contexto de forma diferente:
+
+- Claude lê um único `CLAUDE.md`.
+- Cursor lê `.cursor/rules/*.mdc` com frontmatter próprio.
+- Copilot tem dois mecanismos (`copilot-instructions.md` global +
+  `instructions/*` com `applyTo` por glob).
+- Windsurf lê um único `.windsurfrules`.
+- Continue lê `.continue/rules/*.md`.
+
+Sem adapters, você teria que escrever a mesma coisa 5 vezes.
+
+## Versionando os adapters
+
+**Sim, comite.** Os adapters gerados devem entrar no repo porque:
+
+1. Todo dev do time precisa do mesmo contexto carregado.
+2. CI valida com `maes validate` que estão atualizados.
+3. Em times sem MAES instalado, ainda funciona — basta abrir o cliente.
+
+<Callout type="warn">
+  Adapters são **gerados**. Editar à mão é desperdício — sua mudança será
+  sobrescrita no próximo `maes sync`. Faça a mudança em
+  `.maes/context/human/*.md`.
+</Callout>
+
+## Configurando o `.gitignore`
+
+Times que historicamente ignoravam `.claude/` inteiro precisam permitir
+`.claude/commands/`:
+
+```gitignore
+.claude/*
+!.claude/commands/
+```
+
+## Próximos passos
+
+- [As 6 camadas do MAES](/docs/architecture/overview)
+- [Integrations — Claude Code](/docs/integrations/overview)
+- [`maes sync`](/docs/cli/overview)

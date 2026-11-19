@@ -1,0 +1,119 @@
+name: MAES Audit
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      fail_threshold:
+        description: "Fail the workflow on this severity or above"
+        type: choice
+        options:
+          - CRITICAL
+          - WARNING
+        default: CRITICAL
+
+jobs:
+  audit:
+    name: MAES Context Quality Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install MAES
+        run: pip install -e scripts/tools/ -q
+
+      - name: Run maes sync (freshen synthesis)
+        run: maes sync
+
+      - name: Run maes audit (deterministic)
+        id: audit
+        run: |
+          FLAGS="--format both"
+          if [ "${{ inputs.fail_threshold }}" = "WARNING" ]; then
+            FLAGS="$FLAGS --fail-on-warning"
+          fi
+          maes audit $FLAGS
+          echo "score=$(python -c "import json; d=json.load(open('.maes/audit/latest-report.json')); print(d['score'])")" >> "$GITHUB_OUTPUT"
+          echo "grade=$(python -c "import json; d=json.load(open('.maes/audit/latest-report.json')); print(d['grade'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Post to GitHub Step Summary
+        if: always()
+        run: cat .maes/audit/latest-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maes-audit-${{ github.run_id }}
+          path: .maes/audit/
+          retention-days: 90
+
+      - name: Notify Teams
+        if: >
+          always() &&
+          env.TEAMS_WEBHOOK_URL != '' &&
+          steps.audit.outputs.grade != 'HEALTHY'
+        run: |
+          python - <<'PYEOF'
+          import json, urllib.request, os, sys
+
+          score_str = os.environ.get("AUDIT_SCORE", "0")
+          grade = os.environ.get("AUDIT_GRADE", "UNKNOWN")
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+          run_id = os.environ.get("GITHUB_RUN_ID", "")
+          webhook = os.environ.get("TEAMS_WEBHOOK_URL", "")
+
+          if not webhook:
+              print("TEAMS_WEBHOOK_URL not set, skipping notification.")
+              sys.exit(0)
+
+          score = int(score_str) if score_str.isdigit() else 0
+          color = "FF0000" if score < 60 else "FFA500" if score < 80 else "00B050"
+          emoji = "\U0001f534" if score < 60 else "\U0001f7e1" if score < 80 else "\U0001f7e2"
+
+          card = {
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "summary": f"MAES Audit — {grade}",
+              "themeColor": color,
+              "title": f"{emoji} MAES Audit Report — {grade} ({score}/100)",
+              "sections": [{
+                  "facts": [
+                      {"name": "Repositório", "value": repo},
+                      {"name": "Score", "value": f"{score}/100"},
+                      {"name": "Grade", "value": grade},
+                  ]
+              }],
+              "potentialAction": [{
+                  "@type": "OpenUri",
+                  "name": "Ver no GitHub Actions",
+                  "targets": [{
+                      "os": "default",
+                      "uri": f"https://github.com/{repo}/actions/runs/{run_id}"
+                  }]
+              }]
+          }
+
+          req = urllib.request.Request(
+              webhook,
+              data=json.dumps(card).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          try:
+              urllib.request.urlopen(req, timeout=10)
+              print(f"Teams notification sent: {grade} ({score}/100)")
+          except Exception as exc:
+              print(f"Teams notification failed (non-blocking): {exc}", file=sys.stderr)
+          PYEOF
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          AUDIT_SCORE: ${{ steps.audit.outputs.score }}
+          AUDIT_GRADE: ${{ steps.audit.outputs.grade }}

@@ -1,0 +1,59 @@
+# MAES Blueprint bootstrap — ÚNICA fonte de execução (Official First).
+# Toda chamada de ferramenta parte daqui. O agente /maes-create executa estes
+# passos via Bash; o MAES nunca reimplementa scaffolding.
+#
+# strategy: como criar num diretório que já contém .maes/ (pós `maes init`).
+#   temporary-directory → scaffoldar em subdir temp e mover, preservando
+#                         .maes/, .claude/, CLAUDE.md, .gitignore.
+#   in-place            → usar as flags in-place da própria ferramenta oficial.
+# O MAES não cria mecanismo próprio de merge — segue as capacidades da ferramenta.
+#
+# Versões pinadas por major: um Blueprint é um contrato versionado; deps sem pin
+# derivam (ex.: Tailwind v3→v4 mudou o setup para CSS-first). O `configure` fia o
+# Tailwind v4 (plugin oficial @tailwindcss/vite) e delega os componentes ao CLI
+# oficial do shadcn — nenhuma reimplementação de scaffolding.
+
+strategy: temporary-directory
+
+steps:
+  - id: scaffold
+    description: "Scaffold via Vite (oficial, template react-ts)"
+    run: "pnpm create vite <name> --template react-ts"
+
+  - id: deps
+    description: "Dependências aprovadas do Blueprint (pinadas por major)"
+    run: "pnpm add react-router-dom@^7 @tanstack/react-query@^5 zod@^4 && pnpm add -D tailwindcss@^4 @tailwindcss/vite@^4 vitest@^4 @types/node"
+
+  - id: configure
+    description: "Configurar Tailwind v4 (plugin Vite, CSS-first) e shadcn/ui (CLIs oficiais)"
+    run: |
+      cat > vite.config.ts <<'EOF'
+      import { defineConfig } from 'vite'
+      import react from '@vitejs/plugin-react'
+      import tailwindcss from '@tailwindcss/vite'
+      import path from 'node:path'
+
+      export default defineConfig({
+        plugins: [react(), tailwindcss()],
+        resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+      })
+      EOF
+      cat > tsconfig.json <<'EOF'
+      {
+        "files": [],
+        "references": [
+          { "path": "./tsconfig.app.json" },
+          { "path": "./tsconfig.node.json" }
+        ],
+        "compilerOptions": {
+          "paths": { "@/*": ["./src/*"] }
+        }
+      }
+      EOF
+      node -e "const fs=require('fs');let s=fs.readFileSync('tsconfig.app.json','utf8');if(!s.includes('\"paths\"'))s=s.replace('\"compilerOptions\": {','\"compilerOptions\": {\n    \"paths\": { \"@/*\": [\"./src/*\"] },');fs.writeFileSync('tsconfig.app.json',s)"
+      printf '@import "tailwindcss";\n' > src/index.css
+      pnpm dlx shadcn@latest init -t vite -b radix -p nova -y
+
+finalize:
+  - "maes blueprint seed react-spa"
+  - "maes sync"

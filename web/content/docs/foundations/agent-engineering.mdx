@@ -1,0 +1,104 @@
+---
+title: O que é Agent Engineering
+description: Como agentes consomem o contexto governado do MAES — uma camada fina sobre a Context Layer, nunca a fonte do conhecimento.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+No MAES, **Agent Engineering é deliberadamente fino**. Onde
+[Context Engineering](/docs/foundations/context-engineering) captura, versiona e
+governa o conhecimento, Agent Engineering trata apenas de **como esse
+conhecimento é consumido** — por qual interface, com qual escopo. O conhecimento
+não vive no agente.
+
+<Callout type="info">
+  Agentes são **consumidores** do contexto governado, não a fonte dele. O
+  conhecimento real vive nas assertions, no ownership e nos guards — ver
+  [por que MAES existe](/docs/foundations/why-maes-exists). Esta página é sobre
+  as interfaces que consomem esse contexto, não sobre criar personas que "sabem"
+  coisas.
+</Callout>
+
+## A definição curta
+
+> Agent Engineering é configurar interfaces que **consomem o contexto
+> compilado** — com escopo claro e versionadas no repo. Não é criar perfis
+> especializados que carregam conhecimento próprio.
+
+## Por que é uma camada fina, não um pilar
+
+Uma persona por domínio (um "arquiteto", um "revisor de segurança", um
+"especialista em migração") **não acrescenta conhecimento** — apenas re-empacota
+o contexto que o CLAUDE.md e o MCP já entregam. A maioria do conhecimento
+organizacional é global (não tem path associado), então "especializar" por
+domínio é uma persona sem substância nova.
+
+Por isso o MAES tem poucos agentes, e a decisão de **review** — o único valor
+não-redundante que um agent acrescenta — vive em um único workflow advisory, o
+[`/maes-review`](/docs/agents/maes-review). Segurança e migração entram como
+heurísticas dele, não como personas separadas.
+
+## Anti-padrões que ela elimina
+
+- ❌ Criar uma persona "especialista" para review, segurança ou migração — isso é
+  responsabilidade do [`/maes-review`](/docs/agents/maes-review).
+- ❌ Agent que **duplica** conhecimento nas instruções em vez de herdar do
+  contexto compilado.
+- ❌ "Cada dev tem seu próprio prompt salvo no Notion" / copia-cola de pasta de
+  prompts.
+- ❌ Agents acoplados ao cliente de IA (Cursor-only, Claude-only).
+
+## Como MAES implementa
+
+MAES separa duas classes de agents
+([catálogo completo](/docs/agents/catalog)):
+
+### Agentes core (instalados por `maes init`)
+
+Operações universais sobre a Context Layer, estáveis e mantidos pelo MAES:
+
+- [`/maes-review`](/docs/agents/maes-review) — review consultivo do diff contra o
+  contexto compilado (o mais usado).
+- [`/maes-analyze`](/docs/agents/maes-analyze) — diagnóstico de gaps.
+- [`/maes-context-add`](/docs/agents/maes-context-add) — manutenção do contexto humano.
+- [`/maes-eval`](/docs/agents/maes-eval) — avaliação de qualidade.
+
+Funcionam em qualquer cliente suportado.
+
+### Agents fixos custom (versionados em `.maes/agents/`)
+
+Perfis criados pelo **seu time** para funções que o review consultivo e o
+contexto compilado **não** cobrem — geração de docs, onboarding, proposta de
+design. **Não** para review/segurança/migração (isso é do `/maes-review`):
+
+```yaml
+# .maes/agents/tech-writer.yaml
+name: tech-writer
+inherits_context: true
+instructions: |
+  Gere documentação a partir do código + contexto humano.
+  Cite decisions.md e integrations.md ao descrever comportamento.
+```
+
+`maes sync` materializa cada agent fixo no formato nativo de cada cliente.
+
+## Princípios
+
+1. **Escopo único** — um agent, uma responsabilidade.
+2. **Herda, não duplica** — consome o que já está em `human/` e o que o MCP
+   entrega; nunca re-escreve conhecimento nas próprias instruções.
+3. **Versionado** — vive no repo, revisado em PR.
+4. **Multi-cliente** — definido uma vez, materializado em N clientes.
+
+<Callout type="info">
+  Agent Engineering só faz sentido com Context Engineering maduro. Sem contexto
+  compilado e governado, um agent fixo é só "mais um prompt salvo" — exatamente o
+  problema que o MAES resolve na camada de baixo.
+</Callout>
+
+## Próximos passos
+
+- [`/maes-review`](/docs/agents/maes-review)
+- [Catálogo de agents](/docs/agents/catalog)
+- [Agents fixos](/docs/agents/fixed-agents)
+- [Context Engineering](/docs/foundations/context-engineering)

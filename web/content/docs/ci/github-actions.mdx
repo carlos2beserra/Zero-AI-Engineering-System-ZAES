@@ -1,0 +1,254 @@
+---
+title: "GitHub Actions — Workflows MAES"
+description: "Referência completa dos 8 workflows MAES — triggers, configuração, secrets e progressão recomendada."
+---
+
+## Como instalar
+
+Os workflows estão em `template/.github/workflows/` no repositório MAES. Para usar no seu projeto, copie os arquivos desejados para `.github/workflows/`:
+
+```bash
+# Após maes init, os workflows já estão copiados automaticamente.
+# Para copiar manualmente:
+cp template/.github/workflows/maes-validate.yml .github/workflows/
+cp template/.github/workflows/maes-eval.yml .github/workflows/
+# ... etc
+```
+
+O único workflow obrigatório é `maes-validate.yml`. Os outros 7 são opcionais e adicionam valor de forma incremental.
+
+## Tabela de referência rápida
+
+| Workflow              | Arquivo                     | Trigger                       | Propósito                                       |
+| --------------------- | --------------------------- | ----------------------------- | ----------------------------------------------- |
+| MAES Validate         | `maes-validate.yml`         | Push/PR em `.maes/context/**` | CI gate: sync + validate                        |
+| MAES Audit            | `maes-audit.yml`            | Semanal (Seg 09:00 UTC)       | Auditoria qualitativa de contexto (score 0-100) |
+| MAES Eval             | `maes-eval.yml`             | PR opened/synchronized        | LLM-as-judge em PRs                             |
+| MAES ADR Detect       | `maes-adr-detect.yml`       | PR opened/synchronized        | Detecta mudanças que precisam de ADR            |
+| MAES Governance       | `maes-governance.yml`       | Semanal (Seg 09:30 UTC)       | Dashboard de saúde do contexto                  |
+| MAES Metrics          | `maes-metrics.yml`          | Semanal (Seg 09:00 UTC)       | Coleta métricas via GitHub API                  |
+| MAES Context Snapshot | `maes-context-snapshot.yml` | Release published             | Snapshot de synthesis/ por release              |
+
+## Secrets necessários
+
+| Secret              | Obrigatório para                               | Como configurar                       |
+| ------------------- | ---------------------------------------------- | ------------------------------------- |
+| `ANTHROPIC_API_KEY` | maes-eval                                      | GitHub → Settings → Secrets → Actions |
+| `GITHUB_TOKEN`      | Todos (para postar comentários e criar issues) | Disponível automaticamente em Actions |
+| `TEAMS_WEBHOOK_URL` | maes-audit (notificação opcional no Teams)     | GitHub → Settings → Secrets → Actions |
+
+`ANTHROPIC_API_KEY` é opcional do ponto de vista do CI — sem ela, os scripts que usam LLM encerram silenciosamente com exit 0. O CI não falha, mas avaliação e sugestões de runtime não são geradas. `maes audit` é 100% determinístico e não requer API key.
+
+---
+
+## `maes-validate.yml` — CI gate obrigatório
+
+Este é o workflow mais importante. Roda o compilador MAES e valida o contexto a cada mudança nos arquivos `.maes/`. É o único que deve ser considerado obrigatório para todos os projetos.
+
+```yaml
+name: MAES Validate Context
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+  pull_request:
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install anthropic pyyaml
+      - run: python -m maes sync
+      - run: python -m maes validate
+```
+
+**O que faz:** executa `maes sync` (recompila o pipeline de 7 estágios) e em seguida `maes validate` (verifica conflitos UNRESOLVED e staleness crítico). Termina com exit 1 se qualquer uma das verificações falhar.
+
+**Quando ativa:** apenas quando arquivos em `.maes/context/**`, `config.yaml` ou `OWNERSHIP.yaml` mudam. PRs que não tocam esses arquivos não disparam o workflow — evita custo desnecessário.
+
+**Variáveis requeridas:** nenhuma API key necessária. O `maes sync` e `maes validate` são determinísticos e offline.
+
+---
+
+## `maes-audit.yml` — Auditoria semanal de qualidade
+
+Roda `maes audit` toda segunda-feira e publica o resultado no GitHub Step Summary. Computa um score 0–100 a partir de heurísticas determinísticas sobre o synthesis compilado, classifica como `HEALTHY`, `NEEDS_ATTENTION` ou `CRITICAL`, e opcionalmente notifica o Teams.
+
+**Trigger:** `schedule: cron "0 9 * * 1"` (09:00 UTC, segundas) + `workflow_dispatch`
+
+**Inputs do `workflow_dispatch`:**
+
+| Input            | Tipo   | Padrão     | Descrição               |
+| ---------------- | ------ | ---------- | ----------------------- |
+| `fail_threshold` | choice | `CRITICAL` | `CRITICAL` ou `WARNING` |
+
+**Variáveis requeridas:** nenhuma API key. `maes audit` é 100% determinístico. `TEAMS_WEBHOOK_URL` somente para notificação no Teams (opcional).
+
+**O que faz:**
+
+1. Roda `maes sync` para freshen synthesis
+2. Executa `maes audit --format both` (relatório texto + JSON)
+3. Publica `latest-report.md` no GitHub Step Summary
+4. Faz upload de `.maes/audit/` como artifact (retenção de 90 dias)
+5. Se `TEAMS_WEBHOOK_URL` estiver configurado e `grade != HEALTHY`, notifica o canal com um MessageCard colorido
+
+**Output no Step Summary:**
+
+```
+MAES Audit Report — minha-api
+══════════════════════════════════════════════════════
+Gerado: 2026-05-26 | Score: 85/100 | HEALTHY (85/100)
+Assertions: 52 | Guards: 8 | Hot context: 412/800 tokens
+
+── Conflitos ──────────────────────────────────────────
+  ✓ Sem conflitos UNRESOLVED
+
+── Cobertura ──────────────────────────────────────────
+  ✓ Layer 1 OK (3 assertions)
+  ✓ Layer 2 OK (4 assertions)
+
+── Hot Context ────────────────────────────────────────
+  ✓ Hot context: 412/800 tokens (51.5%)
+
+── Ações Recomendadas ─────────────────────────────────
+  1. [INFO]  Definir owner em frontmatter de 2 assertions órfãs
+```
+
+**Notificação Teams (opcional):**
+
+Quando `TEAMS_WEBHOOK_URL` está configurado e o grade não é HEALTHY, o workflow envia um MessageCard colorido com score, grade e link para o run:
+
+- Grade `CRITICAL` (score < 60): cartão vermelho
+- Grade `NEEDS_ATTENTION` (score 60–79): cartão laranja
+- Grade `HEALTHY` (score ≥ 80): sem notificação
+
+---
+
+## `maes-eval.yml` — LLM-as-judge em PRs
+
+Avalia a qualidade do código de cada PR usando o compilador MAES como critério de julgamento. O LLM verifica se o diff segue as regras compiladas (compliance, arquitetura, padrões de engenharia) e posta um score no PR.
+
+**Trigger:** `pull_request: [opened, synchronize, reopened]`
+
+**Permissões:** `pull-requests: write`, `contents: read`
+
+**Variáveis requeridas:** `ANTHROPIC_API_KEY` (opcional — sem ela o step é pulado silenciosamente).
+
+**Passos principais:**
+
+1. Checkout com `fetch-depth: 0` (necessário para `git diff`)
+2. Gera diff: `git diff origin/$base_ref...HEAD`
+3. Executa `eval-pr.py --diff ... --post-to-github`
+4. Posta resultado como comentário no PR
+
+**Output no PR:**
+
+```
+MAES Eval — Avaliação de Qualidade
+
+Score: 11 / 14 — BOM
+
+Compliance:       3/3  ✓
+Arquitetura:      3/3  ✓
+Padrões:          2/3
+Completude:       2/3
+Custo de tokens:  1/2
+
+Notas:
+  - Tratamento de erro não usa AppError em payments.service.ts
+  - Adicionar teste para o caso de limite de rate atingido
+```
+
+**Configuração opcional de blocking:** por padrão o workflow emite aviso mas não bloqueia merge. Para bloquear quando score for "poor" (< 6/14): configure a variável de repositório `MAES_EVAL_BLOCK_ON_POOR=true` em GitHub → Settings → Variables → Actions.
+
+---
+
+## `maes-adr-detect.yml` — Detecção de mudanças arquiteturais
+
+Analisa o diff de cada PR por regex e identifica padrões que tipicamente exigem registro de decisão arquitetural: migrations de banco, mudanças em contratos de API (OpenAPI, Protobuf), mudanças de infraestrutura (Docker, Kubernetes, Terraform), e modificações em dependências principais.
+
+**Trigger:** `pull_request: [opened, synchronize, reopened]`
+
+**Permissões:** `pull-requests: write`, `contents: read`
+
+**Variáveis requeridas:** nenhuma API key. Análise por regex.
+
+**Tipos de trigger detectados:**
+
+| Tipo                      | Padrão detectado                                    |
+| ------------------------- | --------------------------------------------------- |
+| `api-contract-change`     | Mudanças em `.openapi.yaml`, `.proto`, `contracts/` |
+| `schema-change`           | Migrations SQL e `schema.prisma` com ALTER/DROP     |
+| `infrastructure-change`   | `docker-compose`, `kubernetes/`, `.terraform`       |
+| `dependency-major-change` | `package.json`, `go.mod`, `requirements.txt`        |
+
+Não falha o CI — é apenas informativo.
+
+---
+
+## `maes-governance.yml` — Dashboard semanal de saúde
+
+Gera relatório de saúde do contexto toda segunda-feira: staleness de cada arquivo `human/*.md`, estimativa de tokens, alertas de arquivos muito pequenos ou muito grandes. Publicado no `GITHUB_STEP_SUMMARY` do workflow run (não cria issues).
+
+**Trigger:** `schedule: cron "30 9 * * 1"` + `workflow_dispatch`
+
+**Variáveis requeridas:** nenhuma API key.
+
+**Input opcional (workflow_dispatch):** `archive_decisions: true` — arquiva entradas de `decisions.md` com mais de 180 dias antes de gerar o relatório.
+
+---
+
+## `maes-metrics.yml` — Métricas semanais de processo
+
+Coleta métricas de processo via GitHub API toda segunda-feira: PRs mergeados, cycle time, taxa de adoção do padrão MAES, rework rate. Publicado no `GITHUB_STEP_SUMMARY`.
+
+**Trigger:** `schedule: cron "0 9 * * 1"` (30min antes do governance) + `workflow_dispatch`
+
+**Variáveis requeridas:** `GH_TOKEN` (automático em Actions).
+
+---
+
+## `maes-context-snapshot.yml` — Snapshot por release
+
+Salva um snapshot do `synthesis/` no momento de cada release publicada. Permite rastrear qual era o contexto compilado quando cada versão foi lançada — útil para debugging de decisões históricas.
+
+**Trigger:** `release: [published]`
+
+**Permissões:** `contents: write`
+
+**Variáveis requeridas:** nenhuma API key.
+
+---
+
+## Progressão recomendada
+
+Não é necessário ativar todos os workflows de uma vez. A progressão a seguir reduz o atrito inicial:
+
+**Semana 1:** apenas `maes-validate.yml` — o CI gate fundamental.
+
+**Semana 2:** adicionar `maes-audit.yml` — auditoria qualitativa semanal que detecta problemas que o `validate` não captura: hot context saturado, layers desbalanceados, templates não preenchidos. Não requer API key.
+
+**Semana 3:** reforçar o uso dos agentes externos `/maes-analyze` e `/maes-context-add` no fluxo de PR para manter o contexto humano atualizado.
+
+**Semana 4:** adicionar `maes-eval.yml` — LLM-as-judge após o time já ter familiaridade com o contexto MAES.
+
+**Mês 2:** adicionar `maes-governance.yml` e `maes-metrics.yml` para visibilidade de saúde e adoção.
+
+Os workflows de ADR detect e snapshot podem ser adicionados em qualquer momento conforme a necessidade do time.
+
+## Onde ir a seguir
+
+- Scripts chamados pelos workflows — [Scripts de CI](/docs/ci/scripts)
+- Configurar CI/CD passo a passo — [Configurando CI/CD](/docs/cli/maes-agent)
+- Referência completa do CLI — [Referência do CLI](/docs/cli/reference)

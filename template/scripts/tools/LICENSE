@@ -1,0 +1,27 @@
+MAES — Maxxi AI Engineering System
+Copyright (c) 2026 Maxxidata. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+This software and its associated documentation files (the "Software") are the
+proprietary and confidential property of Maxxidata. The Software is licensed,
+not sold, and is made available exclusively to Maxxidata and its authorized
+personnel and partners for internal use.
+
+Unless expressly authorized in writing by Maxxidata, you may NOT:
+
+  1. copy, reproduce, or distribute the Software or any part of it;
+  2. modify, adapt, translate, or create derivative works of the Software;
+  3. publish, sublicense, sell, rent, lease, or otherwise transfer the Software
+     to any third party;
+  4. remove or alter any proprietary notices contained in the Software.
+
+Distribution of the Software is restricted to Maxxidata's private package
+repository (AWS CodeArtifact) and is intended solely for authorized consumers.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL MAXXIDATA BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

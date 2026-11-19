@@ -1,0 +1,12 @@
+{
+  "title": "Arquitetura",
+  "pages": [
+    "overview",
+    "agent-layer",
+    "context-layer",
+    "compiler-layer",
+    "governance-layer",
+    "documentation-layer",
+    "mcp-layer"
+  ]
+}

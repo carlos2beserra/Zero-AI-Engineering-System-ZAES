@@ -1,0 +1,314 @@
+---
+title: Guia de Adoção para Times
+description: Como um time adota o MAES fase a fase — do setup inicial ao processo contínuo de manutenção de contexto.
+---
+
+## Premissa
+
+Este guia começa de onde o [Quickstart](/docs/getting-started/quick-start) termina — com `.maes/` inicializado e agents funcionando com contexto inferido. O que falta é o conteúdo real: as regras que existem nas cabeças dos seniores, nos RFCs não lidos, nas decisões tomadas em reunião e nunca documentadas.
+
+O processo tem três fases. Cada uma entrega valor independente — não é tudo ou nada.
+
+| Fase                   | Duração  | Quem      | O que fica pronto                                  |
+| ---------------------- | -------- | --------- | -------------------------------------------------- |
+| 1 — Contexto Real      | 1 dia    | 1 dev     | `context/human/` com regras reais, CI configurado  |
+| 2 — Onboarding do Time | 1 semana | Time todo | Decisões documentadas, compliance sem placeholders |
+| 3 — Manutenção         | Ongoing  | Processo  | Contexto acompanha o produto automaticamente       |
+
+## Fase 1 — Contexto Real (1 dev, 1 dia)
+
+**Pré-condição:** `maes init` rodado + agente externo `/maes-analyze` executado no cliente de IA + `maes sync` compilado. O `.maes/` está inicializado, `context/inferred/` populado e os adapters gerados.
+
+**Objetivo:** Substituir os placeholders de `context/human/` por regras reais do time — compliance, decisões arquiteturais e invariantes de domínio.
+
+**Quem faz:** Um dev do time (tech lead recomendado). Os outros membros recebem o resultado via git pull.
+
+### Passos
+
+**1. Revisar o que o agente `/maes-analyze` detectou**
+
+Antes de escrever qualquer coisa, leia o que o LLM encontrou no código:
+
+```bash
+# Armadilhas detectadas — o que a IA provavelmente vai errar
+cat .maes/context/inferred/gaps.json
+
+# Padrões identificados no código
+cat .maes/context/inferred/patterns.json
+```
+
+Esses arquivos revelam campos que parecem mortos mas não são, validações que parecem redundantes mas têm motivo, integrações que não estão documentadas. São o ponto de partida para saber o que documentar em `context/human/`.
+
+**2. Adicionar as regras reais do time**
+
+Use o agente externo `/maes-context-add` (instalado no seu cliente de IA por `maes init`) ou edite diretamente os arquivos `.maes/context/human/*.md`. O agente extrai regras de texto livre, arquivos ou docs existentes e roteia para o arquivo correto automaticamente. Exemplos de conteúdo para capturar:
+
+```
+Pedidos no status FATURADO não podem ter quantidade alterada — integração fiscal já emitiu NF
+```
+
+Ou aponte o agente para `docs/architecture.md` para extrair múltiplas regras de uma vez.
+
+Para o fluxo completo, veja [Mantendo o Contexto Fresco](/docs/guides/keeping-context-fresh).
+
+**3. Verificar e commitar**
+
+```bash
+maes validate   # verifica conflitos e staleness crítico
+git add .maes/context/human/ .maes/synthesis/ CLAUDE.md .claude/
+git commit -m "docs: popula contexto MAES — fase 1 de adoção"
+git push
+```
+
+**4. Configurar o CI gate**
+
+```bash
+cp .maes/templates/maes-validate.yml .github/workflows/maes-validate.yml
+git add .github/workflows/maes-validate.yml
+```
+
+Veja o YAML completo e as opções em [CI/CD](/docs/guides/ci-setup).
+
+**Resultado da Fase 1:** Contexto humano real no repositório. Todo dev que fizer `git pull` recebe os adapters atualizados. O CI valida contexto em todo PR que toca `.maes/`.
+
+## Fase 2 — Onboarding do Time (1 semana)
+
+**Objetivo:** Time inteiro contribuindo com `context/human/` — decisões, compliance e invariantes documentadas no lugar certo.
+
+### Passos
+
+**1. Documentar decisões arquiteturais em `decisions.md`**
+
+Para cada decisão arquitetural relevante que o time já tomou, adicione um registro no formato `DEC-NNN`:
+
+```markdown
+## DEC-001: Banco de dados principal — PostgreSQL
+
+**Data:** 2024-03-15
+**Status:** Ativo
+
+**Decisão:** PostgreSQL como banco principal. RDS Multi-AZ em produção.
+
+**Contexto:** Avaliamos MongoDB (rejeitado — schema-less gerava problemas de consistência
+no domínio financeiro) e MySQL (rejeitado — falta de suporte nativo a JSONB e CTEs recursivas
+necessárias para o relatório de hierarquia de pedidos).
+
+**Consequências:** Migrações via TypeORM. Sem uso de features específicas de PostgreSQL
+que não tenham equivalente documentado — para manter portabilidade de desenvolvimento local.
+```
+
+O formato `DEC-NNN` é importante para que o compilador rastreie referências cruzadas entre decisões.
+
+**2. Adicionar regras de compliance reais em `compliance.md`**
+
+Não deixe esse arquivo com placeholders. Regras de compliance são a layer mais crítica — staleness ≥ 0.8 aqui bloqueia merges no CI.
+
+Exemplos do que documentar:
+
+```markdown
+## PII e Dados Sensíveis
+
+- CPF, CNPJ, número de cartão são PII — nunca logar, nunca expor em stack traces
+- Dados de menores (idade < 18) requerem consentimento explícito dos responsáveis
+- Retenção de logs: máximo 90 dias para logs com PII (exigência LGPD)
+
+## Trilha de Auditoria
+
+- Tabela `audit_logs` é imutável — sem UPDATE, sem DELETE, sem soft-delete
+- Todo acesso a dados de clientes deve gerar entrada em `audit_logs`
+```
+
+**3. Definir invariantes de domínio em `business-rules.md`**
+
+Invariantes de domínio são as regras que nunca mudam independente da implementação. São o tipo de conhecimento que existe nas cabeças dos seniores mas raramente está escrito:
+
+```markdown
+## Pedidos
+
+- Um pedido só pode ser cancelado se estiver nos status: RASCUNHO, CONFIRMADO
+- Pedidos FATURADOS são imutáveis — qualquer ajuste requer nota de devolução (NF-e 55)
+- O campo `external_crm_id` em `orders` é a join key com o pipeline ETL do CRM — não remover
+
+## Clientes
+
+- CPF deve ser validado com dígitos verificadores (biblioteca `cpf-cnpj-validator`)
+- Um cliente pode ter múltiplos CNPJs mas apenas um CPF — CPF é o identificador de pessoa física
+```
+
+**4. Compartilhar os adapters gerados com o time**
+
+Após o time popular `context/human/`:
+
+```bash
+maes sync
+git add CLAUDE.md .cursor/rules/ .windsurfrules .github/copilot-instructions.md
+git add .continue/rules/
+git add .maes/context/human/ .maes/synthesis/
+git commit -m "docs: popula contexto MAES — fase 2 de adoção"
+git push
+```
+
+A partir do `git pull`, todos no time passam a ter o contexto atualizado nos assistentes de IA.
+
+**Resultado da Fase 2:** Contexto humano documentado e versionado. Decisões arquiteturais rastreáveis. Regras de negócio acessíveis para a IA.
+
+## Fase 3 — Manutenção Contínua (ongoing)
+
+**Objetivo:** Contexto acompanha a evolução do produto sem esforço manual significativo.
+
+### Após PRs que mudam arquitetura
+
+Quando um PR altera a arquitetura do sistema — nova integração, mudança de banco, troca de biblioteca crítica — atualize `decisions.md` antes ou junto com o merge. Use o agente externo `/maes-context-add` no seu cliente de IA passando o resumo da decisão (por exemplo `"DEC-007: Migração de REST para gRPC no serviço de inventário — ..."`) ou edite `decisions.md` diretamente. Depois rode:
+
+```bash
+maes sync
+maes validate
+```
+
+O CI avisará automaticamente se o staleness de `decisions.md` ficar crítico (sugere-update workflow, se ativo).
+
+### Responder alertas do CI
+
+Quando o CI reportar staleness em layers 1–3:
+
+```bash
+# Ver o que está desatualizado e por quê
+maes explain status
+
+# Após revisar e confirmar (ou atualizar) o arquivo
+maes sync && maes validate
+```
+
+Se o conteúdo ainda está correto (a regra não mudou, só o código ao redor mudou), adicione uma linha de revisão no arquivo para atualizar o timestamp:
+
+```markdown
+<!-- Revisado em 2026-05-22 — regra ainda válida após refatoração do módulo de pagamentos -->
+```
+
+### Medir impacto com eval (opcional)
+
+Há dois caminhos, com propósitos diferentes:
+
+```text
+# Comparar comportamento da IA com e sem o contexto (no cliente de IA)
+/maes-eval --scenario cpf-validation
+```
+
+```bash
+# Avaliar o diff de um PR contra o rubric, em CI
+python scripts/ci/eval-pr.py --diff pr.diff
+```
+
+O agent `/maes-eval` roda os cenários `.eval.yaml` no LLM do próprio cliente — sem API key. O eval de PR (`eval-pr.py`, normalmente via workflow `maes-eval.yml`) pontua o diff contra um rubric e **requer API key**. Ambos são opcionais — use quando quiser evidência quantitativa de que o contexto está funcionando.
+
+## OWNERSHIP.yaml — Responsabilidade por Layer
+
+O arquivo `.maes/OWNERSHIP.yaml` define quem é responsável por cada layer do contexto. Isso permite que `maes validate` e os workflows de CI atribuam revisões às pessoas certas:
+
+```yaml
+ownership:
+  compliance:
+    owner: "@eng-security"
+    backup: "@tech-lead"
+    review_required: true
+  integrations:
+    owner: "@backend-lead"
+    backup: "@tech-lead"
+  decisions:
+    owner: "@tech-lead"
+    backup: "@senior-dev"
+  business-rules:
+    owner: "@product-eng"
+    backup: "@tech-lead"
+  principles:
+    owner: "@tech-lead"
+    backup: null
+```
+
+Com `OWNERSHIP.yaml` configurado, quando o CI detecta staleness crítico em `compliance.md`, ele pode notificar `@eng-security` diretamente (via workflow de sugestão, se ativo).
+
+## Por que não editar os adapters manualmente?
+
+Uma pergunta comum é: **"Por que não apenas criar CLAUDE.md, .cursor/rules/, .continue/rules/ e copilot-instructions.md na mão?"**
+
+A resposta é escala e consistência. Ler os cenários lado a lado:
+
+### Edição Manual
+
+| Aspecto                 | Resultado                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Adicionar uma regra** | Você edita CLAUDE.md, depois .cursor/rules/, depois .continue/rules/, depois .windsurfrules, depois copilot-instructions.md |
+| **Atualizar uma regra** | A mesma edição em 5 arquivos, formatos diferentes                                                                           |
+| **Remover uma regra**   | 5 buscas, 5 exclusões, fácil deixar uma para trás                                                                           |
+| **Formato**             | Markdown em um, JSON em outro, sintaxe de .cursor diferente de copilot-instructions                                         |
+| **Sincronia**           | Fácil desincronizar — um arquivo fica stale, os outros não                                                                  |
+| **CI**                  | Nada valida — contexto envelhece silenciosamente                                                                            |
+| **Escalabilidade**      | Funciona com 5 regras. Com 50+ regras, torna-se manutenção contínua                                                         |
+
+### Com MAES
+
+| Aspecto                 | Resultado                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Adicionar uma regra** | Agente externo `/maes-context-add` no cliente de IA (ou edição direta em `human/*.md`) — compilador roteia automaticamente |
+| **Atualizar uma regra** | Você edita em um lugar, `maes sync` regenera todos os adapters                                                                |
+| **Remover uma regra**   | Uma exclusão em `context/human/`, tudo sincroniza                                                                             |
+| **Formato**             | Fonte única (YAML) em `.maes/context/human/`, compilador gera cada formato correto                                            |
+| **Sincronia**           | Garantida por design — tudo vem de uma única fonte de verdade                                                                 |
+| **CI**                  | `maes validate` bloqueia merge se camadas críticas ficarem stale (compliance, segurança, contratos)                           |
+| **Escalabilidade**      | O compilador mantém automaticamente até centenas de regras                                                                    |
+
+### Exemplo Concreto
+
+Você tem a regra: **"Pedidos FATURADOS requerem nota de devolução para ajustes — integração fiscal"**
+
+**Edição manual:**
+
+1. Abre CLAUDE.md, adiciona em "Business Rules"
+2. Abre .cursor/rules/business.json, adiciona em rules array
+3. Abre .continue/rules/business.md, adiciona em markdown
+4. Abre .windsurfrules, adiciona em formato Windsurf
+5. Abre .github/copilot-instructions.md, adiciona em markdown
+6. Depois de 2 meses, compliance muda para "Ajustes requerem nota de devolução" — 5 edições de novo
+
+**Com MAES:**
+
+1. Invoque `/maes-context-add` no seu cliente de IA passando o texto da regra (ou edite `.maes/context/human/business-rules.md` diretamente).
+2. Rode `maes sync`.
+
+Todos os adapters (CLAUDE.md, .cursor/rules/, .continue/rules/, .windsurfrules, .github/copilot-instructions.md) são regenerados automaticamente de uma fonte única.
+
+### Quando Edição Manual é Aceitável
+
+- Projeto muito pequeno (1-2 devs, 3-5 regras, prototipagem)
+- Contexto praticamente não muda
+
+### Quando MAES é Essencial
+
+- Time maior (3+ devs) — cada um vai esquecer de manter algo sincronizado
+- Contexto crítico (compliance, segurança) — staleness em CI é obrigatório
+- Projeto em evolução — novas decisões, novas integrações, mudanças de domínio
+- Múltiplas ferramentas — Cursor, Copilot e Claude Code com contextos diferentes = pesadelo manual
+
+---
+
+## Indicadores de Adoção Saudável
+
+O MAES está funcionando quando:
+
+- Devs abrem Claude Code ou Cursor sem precisar reexplicar o projeto a cada sessão
+- `maes validate` passa no CI sem intervenção manual na maioria dos PRs
+- Decisões arquiteturais novas são documentadas em `decisions.md` no mesmo PR que as implementa
+- `context/human/compliance.md` não tem staleness acima de 0.5
+
+O MAES não está funcionando quando:
+
+- `context/human/` ainda tem placeholders depois de 2 semanas
+- O CI falha por staleness toda semana (contexto não está sendo mantido)
+- Devs editam `CLAUDE.md` diretamente ao invés de editar `context/human/` e rodar `maes sync`
+- Ninguém sabe quem é o dono do contexto de compliance
+
+## Onde Ir a Seguir
+
+- Como o compilador processa o contexto → [Arquitetura](/docs/architecture/overview)
+- Referência completa de comandos → [CLI Reference](/docs/cli/reference)
+- Configurar workflows opcionais → [GitHub Actions](/docs/ci/github-actions)

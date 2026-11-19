@@ -1,0 +1,94 @@
+name: MAES ADR Detect — Detectar mudanças que exigem decisão arquitetural
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  adr-detect:
+    name: Detectar triggers de ADR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Gerar diff do PR
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          echo "Diff gerado: $(wc -l < /tmp/pr.diff) linhas"
+
+      - name: Detectar triggers de ADR
+        id: detect
+        run: |
+          RESULT=$(python scripts/ci/detect-adr-triggers.py --diff /tmp/pr.diff || true)
+          echo "result<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$RESULT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          COUNT=$(echo "$RESULT" | python -c "import sys,json; print(len(json.load(sys.stdin)['triggers']))")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Triggers encontrados: $COUNT"
+
+      - name: Postar sugestão de ADR no comentário unificado
+        if: steps.detect.outputs.count != '0'
+        env:
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RESULT:      ${{ steps.detect.outputs.result }}
+          PR_NUMBER:   ${{ github.event.pull_request.number }}
+        run: |
+          TRIGGERS=$(echo "$RESULT" | python -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          for t in r['triggers']:
+              print(f\"- **{t['type']}**: \`{t['file']}\` — {t['description']}\")
+          ")
+
+          ADR_NUM="NNN"
+
+          cat > /tmp/adr-content.txt << CONTENT
+          ### 🏛️ Decisão Arquitetural Detectada
+
+          Este PR modifica arquivos que tipicamente exigem registro de decisão arquitetural:
+
+          $TRIGGERS
+
+          Considere registrar em \`.maes/context/human/decisions.md\` antes do merge:
+
+          \`\`\`markdown
+          ### [DEC-${ADR_NUM}] — [Título da decisão]
+          **Data:** $(date +%Y-%m-%d)
+          **Status:** Ativo
+
+          **Contexto:** [Por que esta mudança foi necessária]
+
+          **Decisão:** [O que foi decidido e por quê]
+
+          **Alternativas consideradas:**
+          - [Alternativa A] — descartada porque [motivo]
+
+          **Consequências:**
+          - ✅ [Benefício]
+          - ⚠️ [Trade-off aceito]
+          \`\`\`
+
+          > Este é um aviso informativo — não bloqueia o merge. Se a decisão já está documentada ou não há trade-off arquitetural, ignore.
+          CONTENT
+
+          python scripts/ci/pr_comment.py \
+            --pr "$PR_NUMBER" \
+            --section adr \
+            --content-file /tmp/adr-content.txt

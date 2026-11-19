@@ -1,0 +1,168 @@
+---
+title: Instalação
+description: Como instalar o MAES a partir do repositório clonado — via install.sh, pipx ou pip editable.
+---
+
+## Pré-requisitos
+
+| Requisito | Versão mínima | Para quê                    |
+| --------- | ------------- | --------------------------- |
+| Python    | 3.9+          | Executar o compilador e CLI |
+| git       | Qualquer      | Clonar o repositório        |
+| pip       | Qualquer      | Instalar o pacote MAES      |
+
+O MAES funciona em Linux, macOS e Windows. No Windows, use PowerShell ou WSL2.
+
+## Passo 1 — Clonar o repositório
+
+```bash
+git clone https://github.com/Maxxidata/maxxi-ai-engineering-system.git
+cd maxxi-ai-engineering-system
+```
+
+## Passo 2 — Instalar o CLI
+
+Escolha uma das três opções abaixo. O `pyproject.toml` em `template/scripts/tools/` define as dependências — não é necessário instalar nada separadamente.
+
+### Opção 1 — Script de instalação (recomendado)
+
+Os scripts instalam o MAES via pipx, injetam as dependências de LLM e verificam o PATH automaticamente.
+
+**Linux e macOS:**
+
+```bash
+bash install.sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+.\install.ps1
+```
+
+Se o PowerShell bloquear a execução por política de execução:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\install.ps1
+```
+
+Ambos os scripts fazem:
+
+1. Verificam se Python 3.9+ está disponível
+2. Instalam pipx se não estiver instalado
+3. Instalam o MAES a partir do diretório local (`template/scripts/tools/`)
+4. Injetam as dependências de LLM (`anthropic`, `openai`) no ambiente isolado
+5. Verificam o PATH e executam `maes doctor`
+
+Para instalar em modo editable (recomendado se você vai modificar o código do CLI):
+
+```bash
+bash install.sh --editable   # Linux/macOS
+.\install.ps1 -Editable      # Windows
+```
+
+Após a instalação, abra um novo terminal e execute `maes doctor` para verificar.
+
+### Opção 2 — pipx install (manual)
+
+Se preferir instalar sem usar os scripts:
+
+```bash
+# Linux/macOS
+pip install pipx && pipx ensurepath
+pipx install "./template/scripts/tools"
+pipx inject maes anthropic openai
+```
+
+```powershell
+# Windows PowerShell
+pip install pipx; pipx ensurepath
+pipx install ".\template\scripts\tools"
+pipx inject maes anthropic openai
+```
+
+Reinicie o terminal após `pipx ensurepath` para que o PATH seja atualizado.
+
+### Opção 3 — pip install -e . (desenvolvimento)
+
+Para contribuir com o desenvolvimento do CLI ou testar sem instalar permanentemente:
+
+```bash
+cd template/scripts/tools
+pip install -e ".[all]"
+```
+
+O extra `[all]` instala `anthropic`, `openai` e `mcp` automaticamente. Nesse modo, qualquer edição nos arquivos `.py` do CLI é refletida imediatamente sem reinstalar.
+
+Para usar sem instalar (substituindo `maes` por `python -m maes`):
+
+```bash
+cd template/scripts/tools
+pip install anthropic openai pyyaml
+python -m maes doctor
+```
+
+---
+
+## Passo 3 — Provider de LLM (opcional)
+
+Se você for usar scripts de CI com LLM, configure os secrets no repositório:
+
+- `ANTHROPIC_API_KEY` — Anthropic Claude (recomendado para CI)
+- `GITHUB_TOKEN` — GitHub Models (gratuito com Copilot Enterprise)
+- `GEMINI_API_KEY` — Google Gemini (free tier disponível)
+
+---
+
+## Verificar a Instalação
+
+```bash
+maes doctor
+```
+
+Saída esperada quando tudo está correto:
+
+```
+MAES Doctor
+
+System
+  ✔ Python 3.13.x
+  ✔ pyyaml 6.0.2
+  ✔ mcp installed (maes serve available)
+  ℹ LLM SDKs são opcionais — usados pelos scripts de CI no GitHub Actions
+
+Project
+  ✗ .maes/ not found — run `maes init` to initialize
+
+✗ 1 issue(s) found.  Run `maes init` then `maes sync`.
+```
+
+O erro sobre `.maes/` é esperado em um diretório sem projeto MAES inicializado.
+
+---
+
+## Atualizar o CLI
+
+Como o MAES é instalado de um diretório local, para atualizar basta fazer `git pull` no repo:
+
+```bash
+cd maxxi-ai-engineering-system
+git pull
+
+# Se instalou via pipx:
+pipx install "./template/scripts/tools" --force
+
+# Se instalou via pip -e (editable):
+# Nenhuma ação necessária — as mudanças já estão ativas.
+```
+
+---
+
+## Próximos Passos
+
+Com o MAES instalado:
+
+- Primeiro ciclo completo → [Quickstart](/docs/getting-started/quick-start)
+- Configurar CI gate → [CI/CD](/docs/guides/ci-setup)
+- Entender como o compilador funciona → [Arquitetura](/docs/architecture/overview)

@@ -1,0 +1,162 @@
+---
+title: Trabalhando com AI Coding Agents
+description: Como estruturar sessões de trabalho com AI coding agents para obter resultados consistentes, revisáveis e reproduzíveis.
+---
+
+Este guia não é sobre prompt engineering. É sobre como organizar o trabalho diário com AI coding agents de forma que o resultado seja confiável — não apenas no seu chat, mas no próximo PR, na sessão do dev ao lado, e em produção.
+
+O MAES garante que o contexto organizacional esteja sempre presente. Este guia ensina como trabalhar dentro desse contexto.
+
+---
+
+## Antes de Começar uma Sessão
+
+**Defina o objetivo antes de abrir o chat.**
+
+A tentação é abrir uma conversa e ir construindo o objetivo enquanto fala com a IA. Isso gera sessões longas, com backtrack, com contexto acumulado desnecessariamente. Um objetivo claro antes de começar economiza tokens e produz resultado mais focado.
+
+Ruim: _"vou ver o que precisa ser feito no checkout"_
+Bom: _"implementar validação de CPF no campo taxpayer_id do endpoint POST /checkout com retorno 422 para CPF inválido"_
+
+**Uma task por conversa.**
+
+Brainstorm, design e implementação são atividades com contexto diferente. Misturá-las na mesma conversa degrada a qualidade de todas as três:
+
+- Brainstorm em nova conversa — explora opções, sem compromisso com implementação
+- Design em nova conversa — define estrutura, contratos, interfaces
+- Implementação em nova conversa — executa a decisão tomada
+
+Iniciar a implementação no mesmo chat do brainstorm significa que o modelo vai carregar todo o contexto exploratório junto com o contexto de execução. O resultado é código que às vezes mistura a abordagem descartada com a abordagem escolhida.
+
+**Abra os arquivos relevantes no IDE antes de pedir mudança.**
+
+Ferramentas como Claude Code e Cursor usam o arquivo aberto e a seleção ativa como contexto. Se você quer uma mudança no `order-service.ts`, abra o arquivo. Se quer mudança em um método específico, selecione o trecho.
+
+Descrever verbalmente o código ao invés de mostrar o arquivo é uma fonte recorrente de divergência entre o que você pediu e o que foi gerado.
+
+**Confirme que o MAES está ativo.**
+
+Com `maes init` + `maes sync` executados e adapters gerados, o contexto organizacional já está presente. Verifique com `maes doctor` se estiver em dúvida. Se o CLAUDE.md não existe ou está desatualizado, a IA vai trabalhar sem as regras do projeto.
+
+---
+
+## Durante a Conversa
+
+**Seja específico no resultado esperado, não só na ação.**
+
+A IA precisa saber o que sucesso parece. Incluir o critério de aceitação elimina uma rodada de iteração:
+
+Menos específico: _"adiciona validação de CPF"_
+Mais específico: _"adiciona validação de CPF no campo taxpayer_id. Retorna 422 com body `{ error: 'invalid_cpf' }` quando inválido. Usa a lib cpf-cnpj-validator já presente no projeto — não adicionar regex."_
+
+Com MAES ativo, a lib e a regra de CPF já estão no contexto compilado. Mas especificar o critério de aceitação ainda evita ambiguidade.
+
+**Inclua o contexto relevante — sem resumir erros.**
+
+Quando há um bug ou erro, inclua o stack trace completo, não o resumo que você fez do erro. A IA diagnostica a partir do que vê, não do que você interpreta.
+
+Ruim: _"deu um erro de banco de dados"_
+Bom: _[stack trace completo colado]_
+
+O mesmo vale para logs de CI, outputs de testes e mensagens de compilação. Resumos criam um segundo intermediário entre o erro real e o diagnóstico — e o diagnóstico vai ser tão bom quanto o resumo.
+
+**Não concatene tasks na mesma conversa.**
+
+Se você começou pedindo o endpoint POST /orders e no meio da conversa lembrou que precisa corrigir um bug no endpoint GET /orders/history, abra nova conversa para o bug. Misturar tasks faz o modelo alternar de contexto e aumenta a chance de respostas que confundem os dois escopos.
+
+**Quando a IA sugerir algo que você já descartou, registre como decisão.**
+
+Se a IA propõe usar Prisma e você já decidiu usar TypeORM, não descarte mentalmente. Adicione em `decisions.md`:
+
+```bash
+# Use o agente externo /maes-context-add no seu cliente de IA com o texto:
+#   "DEC-NNN: TypeORM escolhido sobre Prisma — [motivo]. Prisma foi avaliado e descartado."
+# Ou edite diretamente .maes/context/human/decisions.md
+maes sync
+```
+
+Na próxima sessão, a IA não vai propor Prisma novamente — a decisão está no contexto compilado.
+
+---
+
+## Após Receber o Output
+
+**Revise o diff linha por linha antes de aceitar.**
+
+A IA acerta o happy path consistentemente. Ela erra sistematicamente em:
+
+- Edge cases não cobertos por testes
+- Tratamento de erro incompleto (catch vazio, mensagens genéricas)
+- Dados sensíveis que acabam em logs
+- Validações que parecem redundantes mas não são
+- Mudanças fora do escopo pedido
+
+Revisar o diff não é falta de confiança na IA — é a etapa que diferencia engenharia de copy/paste. Você é responsável pelo código que aceita.
+
+**Execute os testes antes de aceitar.**
+
+Output da IA que não foi validado por testes não é código — é rascunho. Se os testes não existem para o trecho modificado, isso é sinal de que o risco é maior, não menor.
+
+**Valide manualmente o caso de uso principal.**
+
+Testes automatizados verificam o que você já sabia que poderia quebrar. A validação manual descobre o que você não sabia que deveria testar. Para features novas, percorra o fluxo completo pelo menos uma vez antes de abrir PR.
+
+**Verifique se o código gerado respeita as regras do contexto.**
+
+Com MAES ativo, as regras estão no contexto da IA — mas isso não garante 100% de conformidade em todos os casos. Para mudanças críticas (autenticação, dados financeiros, integrações externas), revise explicitamente se:
+
+- Dados sensíveis não estão sendo logados
+- Campos de integração não foram modificados
+- Transições de estado inválidas não foram introduzidas
+
+Use o agent `/maes-eval` quando quiser evidência quantitativa do comportamento da IA no contexto atual.
+
+---
+
+## Quando Abrir Nova Conversa
+
+Abrir nova conversa não é recomeçar do zero — é garantir que o contexto da próxima task seja limpo e focado.
+
+**Abra nova conversa quando:**
+
+- Concluiu a task atual (não importa se o chat ainda tem espaço)
+- Vai mudar de domínio radicalmente — de implementação de feature para debug de produção, de backend para infra
+- A IA começou a contradizer respostas anteriores na mesma sessão (sinal de context pollution)
+- A conversa tem mais de 20-30 turnos e a qualidade das respostas está caindo
+- Mudou a decisão de abordagem no meio da implementação (começa do zero é mais limpo que corrigi o contexto)
+
+**Nunca deixe uma conversa durar mais de um dia de trabalho.**
+
+Conversas multi-dia acumulam contexto de múltiplas tasks, decisões intermediárias descartadas e estados transitórios. O resultado é um contexto que nenhum humano consegue resumir — e a IA também não consegue.
+
+---
+
+## Sinais de que a Sessão Está Degradando
+
+Identifique esses padrões e abra nova conversa quando aparecerem:
+
+- A IA menciona abordagens que você descartou explicitamente no começo da conversa
+- As respostas ficam mais longas e menos precisas ao longo do tempo
+- A IA pede confirmação de coisas que já foram estabelecidas
+- O código gerado nas últimas respostas é inconsistente com o código das primeiras
+- A IA começa a contradizer a si mesma dentro da mesma conversa
+
+Esses são sintomas de context pollution — o contexto cresceu a ponto de diluir o sinal relevante. A solução é sempre a mesma: nova conversa, objetivo claro, contexto MAES ativo.
+
+---
+
+## Referência Rápida
+
+| Situação                      | O que fazer                                                            |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| Antes de implementar          | Defina o objetivo completo primeiro                                    |
+| Erro de execução              | Cole o stack trace completo, não o resumo                              |
+| IA sugeriu algo já descartado | Adicione em `decisions.md` via `/maes-context-add` ou edição direta |
+| Múltiplas tasks diferentes    | Uma conversa por task                                                  |
+| Respostas perdendo coerência  | Abra nova conversa                                                     |
+| Antes de aceitar o diff       | Revise linha por linha + execute testes                                |
+| Feature crítica               | Validação manual do fluxo completo                                     |
+
+---
+
+Para os padrões que mais causam retrabalho, veja [Anti-Patterns](/docs/reference/anti-patterns). Para práticas específicas de uso de IA em times, veja [Boas Práticas para Times](/docs/advanced/team-ai-workflow).

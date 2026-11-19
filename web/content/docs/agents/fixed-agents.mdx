@@ -1,0 +1,80 @@
+---
+title: Agents fixos especializados
+description: Perfis reutilizáveis em .maes/agents/ que herdam todo o contexto compilado.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Além dos slash commands externos, o MAES suporta **agents fixos** definidos
+em `.maes/agents/*.yaml`. São perfis especializados, versionados no repo,
+que **herdam todo o contexto compilado** e adicionam instruções próprias.
+
+## Exemplos típicos
+
+```
+.maes/agents/
+├── arquiteto.yaml
+├── tech-writer.yaml
+└── onboarding-buddy.yaml
+```
+
+<Callout type="warn">
+  Review de código, segurança e migração **não** são agents fixos — ficam a
+  cargo do [`/maes-review`](/docs/agents/maes-review). Reserve agents fixos para
+  funções que o review consultivo + contexto compilado não cobrem (proposta de
+  design, geração de docs, onboarding).
+</Callout>
+
+## Estrutura de um agent fixo
+
+```yaml
+# .maes/agents/arquiteto.yaml
+name: arquiteto
+description: |
+  Proponha designs respeitando decisões registradas. Analise impacto
+  em módulos existentes antes de sugerir mudanças estruturais.
+
+inherits_context: true # carrega tudo de .maes/context/
+
+instructions: |
+  - Sempre cite o DEC-XXX que justifica/contradiz a proposta.
+  - Liste módulos afetados (ler inferred/modules.md).
+  - Se a proposta criar uma nova decisão arquitetural, recomende
+    abrir um ADR antes de implementar.
+
+allowed_tools: [read, search]
+```
+
+## Como o cliente os enxerga
+
+Após `maes sync`, cada agent fixo vira:
+
+- Um arquivo em `.claude/agents/arquiteto.md` (Claude Code).
+- Uma entrada em `.cursor/rules/agents/arquiteto.mdc` (Cursor).
+- Equivalente em cada cliente suportado.
+
+A invocação varia por cliente — em Claude Code você usa `@arquiteto`, em
+Cursor também `@arquiteto`, etc.
+
+## Quando criar um agent fixo
+
+- Quando o time **repete o mesmo prompt** para uma função que o `/maes-review`
+  não cobre (proposta de design, geração de docs, onboarding).
+- Quando há **especialização** clara não atendida pelo review consultivo
+  (acessibilidade, i18n, performance).
+- Quando você quer **versionar** o "modo de pensar" junto com o código.
+
+<Callout type="info">
+  Para review, segurança ou migração, use o [`/maes-review`](/docs/agents/maes-review)
+  — ele já recebe as assertions, guards e heurísticas dessas dimensões.
+</Callout>
+
+<Callout type="info">
+  Agents fixos são propriedade do time — edite, revise em PR, evolua. São parte
+  do contexto versionado.
+</Callout>
+
+## Próximos passos
+
+- [Catálogo de agents](/docs/agents/catalog)
+- [As 6 camadas do MAES](/docs/architecture/overview)

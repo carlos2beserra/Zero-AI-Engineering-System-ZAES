@@ -1,0 +1,12 @@
+{
+  "title": "Agents",
+  "pages": [
+    "catalog",
+    "maes-review",
+    "maes-analyze",
+    "maes-context-add",
+    "maes-eval",
+    "fixed-agents",
+    "creating-custom-agents"
+  ]
+}

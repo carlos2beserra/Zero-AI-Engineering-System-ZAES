@@ -1,0 +1,233 @@
+---
+title: "Evals (LLM-as-Judge)"
+description: "Como o framework de evals do MAES mede se o contexto compilado muda o comportamento da IA para melhor."
+---
+
+## O que são Evals no MAES
+
+Evals são o mecanismo de verificação empírica do MAES: eles medem se o contexto compilado tem impacto real nas respostas da IA, e não apenas teórico.
+
+O problema que os evals resolvem: você pode ter um `business-rules.md` bem escrito com a regra "nunca fazer DELETE físico — usar `deleted_at`". Mas como saber se essa regra realmente muda o comportamento da IA quando ela implementa a exclusão de um usuário? Sem evals, você depende de revisão manual de cada PR ou espera que um bug chegue em produção.
+
+Com evals, você escreve um cenário de teste para essa regra, roda o agent `/maes-eval` e obtém uma comparação quantificada: a IA sem contexto MAES sugere DELETE; a IA com contexto MAES usa `deleted_at`. Delta positivo — o contexto funciona.
+
+---
+
+## Dois mecanismos distintos
+
+O MAES tem **dois** caminhos de avaliação, com propósitos diferentes. Não confunda:
+
+| | Agent `/maes-eval` | CI `eval-pr.py` (`maes-eval.yml`) |
+| --- | --- | --- |
+| **Pergunta** | O contexto melhora o comportamento da IA? | Este PR específico tem qualidade? |
+| **Entrada** | Tarefa em texto livre (ad-hoc) **ou** cenários `.eval.yaml` | O diff do PR |
+| **Método** | WITH vs WITHOUT contexto → delta | Rubric de 5 dimensões → score 0–14 |
+| **Onde roda** | No chat, via cliente de IA | No GitHub Actions |
+| **LLM** | Do próprio cliente (sem API key) | Requer API key (`ANTHROPIC_API_KEY` etc.) |
+| **Gabarito** | `expected` / `anti_expected` (do cenário ou derivados na hora) | `.maes/evals/eval-rules.md` |
+
+> Não existe um comando CLI `maes eval`. A avaliação é feita pelo **agent** `/maes-eval`; a avaliação de PR em CI é feita pelo script `eval-pr.py`.
+
+O restante desta página cobre o **agent `/maes-eval`**. Para o eval de CI, veja a seção [Eval em CI](#eval-em-ci).
+
+---
+
+## Por que Rodar Evals
+
+**Para validar contexto novo:** Sempre que você adiciona uma regra crítica em `human/`, crie um cenário de eval correspondente. A regra só é considerada efetiva quando o eval mostra delta positivo.
+
+**Para identificar regras ineficazes:** Se um eval mostra que o contexto MAES não muda o comportamento da IA em um cenário crítico, o texto da regra precisa ser reformulado — mais específico, mais prescritivo.
+
+**Para detectar regressões:** Se um eval que passava começa a falhar após uma mudança em `human/`, há uma inconsistência introduzida. O eval serve como teste de regressão do contexto.
+
+**Para medir ROI do contexto:** O relatório de evals mostra o delta médio de qualidade. Se o delta for próximo de zero, o contexto está com problemas estruturais.
+
+---
+
+## Estrutura de um Cenário
+
+Cenários ficam em `.maes/evals/scenarios/` com extensão `.eval.yaml`. Cada arquivo define um caso de teste:
+
+```yaml
+id: soft-delete-check
+agent: maes-implement
+task: "Implemente a exclusão de usuário no UserService"
+expected:
+  - description: "Respeita soft delete"
+    check: "Usa deleted_at timestamp ao invés de DELETE físico"
+anti_expected:
+  - description: "Exclusão destrutiva"
+    check: "NÃO emite DELETE físico em tabela com audit trail"
+evaluation_method: llm-as-judge
+judge_prompt: "A resposta WITH respeitou a regra de soft delete melhor que a baseline?"
+```
+
+**Campos:**
+
+- `id` — identificador único, usado em `/maes-eval --scenario ID`
+- `agent` — qual agent o cenário testa (ex.: `maes-implement`); permite filtrar com `/maes-eval --agent ID`
+- `task` — o prompt enviado à IA (exatamente como seria enviado em uma sessão real)
+- `expected` — lista de comportamentos desejados (`description` + `check`) que o juiz procura na resposta
+- `anti_expected` — lista de comportamentos indesejados que o juiz penaliza
+- `judge_prompt` — pergunta customizada para o juiz (opcional; default: _"Did the agent follow its constraints?"_)
+
+O `maes init` já cria cenários placeholder em `.maes/evals/scenarios/` com os campos `expected`/`anti_expected` preenchidos com `TODO` — basta editá-los.
+
+**Escrevendo bons cenários:**
+
+A `task` deve ser genérica o suficiente para que a IA sem contexto produza uma resposta razoável mas incorreta segundo as regras do projeto. Se a task for específica demais ("implemente soft delete usando deleted_at"), a IA sem contexto pode acertar por acidente — o delta não seria significativo.
+
+---
+
+## O que /maes-eval Faz
+
+O agent executa 3 chamadas de LLM por cenário:
+
+**Passo 1 — WITH context:** A `task` do cenário é enviada com o contexto MAES compilado (`anti-hallucination.json` + guards `block` de `synthesis/`) injetado no system prompt. A resposta é capturada como `response_with`.
+
+**Passo 2 — WITHOUT context:** A mesma `task` é enviada sem nenhum contexto MAES (baseline). A resposta é capturada como `response_without`.
+
+**Passo 3 — LLM-as-judge:** Um terceiro LLM recebe as duas respostas, os `expected`/`anti_expected` do cenário e o `judge_prompt`. Ele pontua cada resposta (0.0–1.0), calcula o `delta` e decide se o contexto ajudou (`maes_helped`).
+
+Ao final, o agent agrega: `pass_count` = cenários com `maes_helped == true`, e o veredicto é **PASS** se `pass_rate >= 0.70`.
+
+> Como o agent roda dentro do seu cliente de IA, ele usa o LLM do próprio cliente — **sem custo extra nem API key**.
+
+---
+
+## Comandos
+
+O `/maes-eval` é um **agent**, invocado no seu cliente de IA (não um comando CLI). Você **não precisa criar cenários** para usá-lo.
+
+**Avaliar uma tarefa em texto livre (caminho normal):**
+
+```text
+/maes-eval corrigir responsividade da tela de pipeline dos projetos
+```
+
+O agent monta um cenário ad-hoc na hora a partir da sua tarefa — veja [Uso ad-hoc](#uso-ad-hoc).
+
+**Rodar os cenários `.eval.yaml`, se você tiver (opcional):**
+
+```text
+/maes-eval                          # todos os cenários
+/maes-eval --scenario soft-delete   # um cenário específico
+/maes-eval --agent maes-implement   # filtra por agent testado
+```
+
+O agent apresenta o relatório direto no chat, incluindo as notas do juiz para itens com `delta < 0` — útil para entender por que algo falhou e como reformular a regra ou os `expected`/`anti_expected`.
+
+> **Limite:** ~10 cenários por sessão (cada um = 3 chamadas de LLM). Para suites maiores, filtre por `--agent` ou rode em lotes.
+
+---
+
+## Uso ad-hoc
+
+Passar uma **tarefa em texto livre** é o jeito normal de rodar o `/maes-eval` num projeto já configurado — **sem precisar de nenhum `.eval.yaml`**:
+
+```text
+/maes-eval corrigir responsividade da tela de pipeline dos projetos
+```
+
+O agent monta um **cenário ad-hoc em memória** a partir da sua task, derivando os `expected`/`anti_expected` das regras relevantes do contexto compilado (guards `block`, `anti-hallucination.json` e assertions pertinentes), e roda o mesmo padrão WITH/WITHOUT/judge para esse cenário único. Exemplo de saída:
+
+```text
+MAES Eval
+──────────────────────────────────────────────────
+Cenários: 1 total (ad-hoc — derivado do argumento)
+
+  pipeline-screen-responsiveness   delta: +0.35   PASS   MAES evitou dark:/cores hardcoded e direcionou para tokens/DataGrid/i18n
+
+Resultado: 1/1 cenários com delta positivo (100%)
+Threshold: 70%
+
+✓ PASS — contexto MAES melhora a qualidade do output em 100% dos cenários
+```
+
+<Callout type="info">
+  O modo ad-hoc é um **modo suportado** do agent (a partir da versão 1.1.0 do
+  agent — declarado no `argument_hint`). Para avaliação **repetível** (CI,
+  regressão, comparar antes/depois de mudar contexto), escreva um cenário
+  `.eval.yaml`: ele fixa os `expected`/`anti_expected`, enquanto o ad-hoc os
+  deriva na hora. Use ad-hoc para o dia a dia; cenários para medição estável.
+</Callout>
+
+---
+
+## Interpretando os Resultados
+
+O agent mostra o relatório no chat e, **com sua aprovação explícita**, salva em `.maes/evals/results/<timestamp>.json`:
+
+```json
+{
+  "timestamp": "2026-05-22T09:00:00Z",
+  "total": 8,
+  "passed": 6,
+  "pass_rate": 0.75,
+  "verdict": "PASS",
+  "results": [
+    {
+      "scenario_id": "soft-delete-check",
+      "maes_helped": true,
+      "delta": 0.40,
+      "summary": "WITH usa deleted_at; baseline usa DELETE físico."
+    },
+    {
+      "scenario_id": "pii-masking-logs",
+      "maes_helped": false,
+      "delta": 0.0,
+      "summary": "Ambas evitam logar PII, mas por razões diferentes."
+    }
+  ]
+}
+```
+
+**Interpretação:**
+
+- `pass_rate >= 0.70` — contexto funcionando
+- `pass_rate < 0.70` — contexto com problemas; revisar regras com `delta` negativo ou zero
+- `delta < 0` — o contexto MAES piora a resposta neste cenário; investigar conflito ou redação da regra
+- `delta == 0` — o contexto não muda o comportamento; reformule a regra para ser mais específica e prescritiva
+
+---
+
+## Quando Criar Novos Cenários
+
+**Para cada `ai_likely_mistake` em `inferred/gaps.json`:** O agente externo `/maes-analyze` identifica os erros que a IA provavelmente comete no seu codebase específico. Cada item em `ai_likely_mistakes` é um candidato a cenário de eval. Exemplo:
+
+```json
+{
+  "ai_likely_mistakes": [
+    "Usar DELETE ao invés de soft delete em tabelas com audit trail",
+    "Retornar dados de usuário sem filtrar campos PII para roles não-admin",
+    "Criar transactions sem rollback explícito em operações multi-tabela"
+  ]
+}
+```
+
+Para cada item, escreva um cenário que teste se o contexto MAES corrige o comportamento.
+
+**Para cada regra crítica em `compliance.md`:** Regras de compliance (LGPD, PCI-DSS, auditoria) devem ter cobertura de eval obrigatória. Se a regra não tem cenário, não há garantia de que está sendo aplicada.
+
+**Após um bug relacionado a contexto:** Se um dev gerou código incorreto porque a regra não estava clara o suficiente, crie um cenário que teria detectado o problema. O eval evita regressão.
+
+---
+
+## Eval em CI
+
+O eval de CI é um mecanismo **diferente** do agent `/maes-eval`: em vez de rodar cenários WITH/WITHOUT, ele avalia o **diff do PR** contra um rubric.
+
+Para ativá-lo, use o workflow `maes-eval.yml` que já vem em `template/.github/workflows/`. A cada PR opened ou synchronized ele roda o script `eval-pr.py`, que:
+
+1. Lê o diff do PR e o rubric de `.maes/evals/eval-rules.md`.
+2. Pede a um LLM um score em 5 dimensões — correctness, pattern adherence, security, completeness, cost-efficiency — totalizando **0–14 pontos** e um `verdict` (`excellent` / `good` / `regular` / `poor`).
+3. Posta o resultado como comentário no PR.
+
+Diferente do agent, o eval de CI **requer API key** (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN` ou `GEMINI_API_KEY`) e, na V1, é sempre **advisory** — nunca bloqueia o merge via exit code.
+
+<Callout type="info">
+  O eval de CI consome tokens de API a cada PR. Para times com muitos PRs,
+  considere restringir o workflow a PRs que modificam arquivos em
+  `.maes/context/human/` ou no código de domínio. O cenário-driven (`/maes-eval`)
+  continua sendo gratuito — roda no LLM do seu cliente.
+</Callout>

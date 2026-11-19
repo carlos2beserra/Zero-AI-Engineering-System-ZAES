@@ -1,0 +1,153 @@
+---
+title: Migrando de CLAUDE.md Manual
+description: Como importar um CLAUDE.md ou Cursor Rules existente para o MAES sem perder o trabalho acumulado.
+---
+
+Se você já tem um `CLAUDE.md` mantido manualmente, `.cursor/rules/`, ou documentos com regras do projeto espalhados em Notion ou arquivos markdown — este guia cobre como migrar para o MAES sem reescrever nada do zero.
+
+## Por que migrar?
+
+Um `CLAUDE.md` manual funciona bem individualmente. O problema aparece quando:
+
+- **O time cresce**: cada dev com sua cópia, divergindo silenciosamente
+- **O arquivo fica grande**: 500 linhas sem hierarquia de prioridade — compliance e preferência de nomenclatura têm o mesmo peso
+- **Ninguém sabe o que está stale**: uma decisão de 2 anos atrás que já mudou continua no contexto
+- **Você troca de ferramenta**: o Cursor Rules que construiu não serve para o Claude Code
+
+O MAES resolve os três: estrutura em layers de prioridade, staleness tracking com CI, e um único source gerado para todas as ferramentas.
+
+---
+
+## Migração via agente externo `/maes-context-add`
+
+A forma mais simples de migrar é deixar o agente externo (instalado por `maes init` no seu cliente de IA) extrair e rotear as regras automaticamente. No cliente de IA (Claude Code, Cursor, Copilot, Windsurf, Continue), invoque o slash command `/maes-context-add` e aponte para o arquivo de origem:
+
+- _"Extraia as regras de `CLAUDE.md` e roteie para `.maes/context/human/`"_
+- _"Extraia as regras de `.cursor/rules/main.mdc` e roteie"_
+- _"Leia todos os arquivos em `docs/architecture/` e roteie as regras encontradas"_
+
+O agente usa o LLM do seu próprio cliente de IA para:
+
+1. Ler o arquivo de origem
+2. Extrair cada regra individual
+3. Classificar em qual layer pertence (compliance, decisions, business-rules, etc.)
+4. Escrever no arquivo `context/human/` correto com o frontmatter adequado
+
+Peça um preview antes de aplicar ("mostre o que seria extraído sem modificar nada") se quiser revisar antes.
+
+### Verificar o resultado
+
+Depois da extração, revise os arquivos gerados:
+
+```bash
+# Ver o que foi roteado para cada arquivo
+cat .maes/context/human/compliance.md
+cat .maes/context/human/decisions.md
+cat .maes/context/human/principles.md
+
+# Recompilar e verificar o resultado final
+maes sync
+cat CLAUDE.md
+```
+
+O `CLAUDE.md` gerado pelo MAES deve conter as mesmas regras do original, mas estruturadas em seções por prioridade.
+
+---
+
+## Migração Manual (para mais controle)
+
+Se preferir classificar as regras manualmente — o que dá mais controle sobre o resultado:
+
+### 1. Inicializar a estrutura
+
+```bash
+cd seu-projeto
+maes init   # cria .maes/context/human/*.md com templates
+```
+
+### 2. Copiar regras para os arquivos corretos
+
+Abra seu `CLAUDE.md` atual e distribua cada regra:
+
+| Tipo de regra                               | Arquivo destino                  | Layer |
+| ------------------------------------------- | -------------------------------- | ----- |
+| Compliance, PII, LGPD, auditoria            | `compliance.md`                  | 1     |
+| Auth, tokens, secrets, segurança            | `compliance.md` (com `layer: 2`) | 2     |
+| APIs externas, webhooks, SLAs               | `integrations.md`                | 3     |
+| Decisões arquiteturais (ADRs)               | `decisions.md`                   | 4     |
+| Regras de negócio, invariantes de domínio   | `business-rules.md`              | 5     |
+| Padrões de código, nomenclatura, convenções | `principles.md`                  | 6     |
+
+### 3. Formato das regras em `context/human/`
+
+Cada arquivo usa frontmatter YAML seguido de bullets:
+
+```markdown
+---
+layer: 5
+ttl: 90d
+owner: team:backend
+---
+
+## Invariantes de Pagamento
+
+- Pedidos no status FATURADO são imutáveis — NF-e já emitida
+- Estornos não podem ultrapassar o valor original da transação
+- Transações em moeda estrangeira são sempre convertidas para BRL no momento da criação
+```
+
+### 4. Compilar e comparar
+
+```bash
+maes sync
+
+# Comparar o novo CLAUDE.md com o original
+diff CLAUDE.md.bak CLAUDE.md   # (renomeie o original antes do sync)
+```
+
+---
+
+## Lidando com Regras de Longa Data
+
+Ao migrar um `CLAUDE.md` com meses de trabalho, algumas regras podem estar:
+
+- **Desatualizadas**: a decisão foi tomada, mas já mudou — não migre, arquive em `decisions.md` com nota de data
+- **Muito vagas**: "sempre usar boas práticas de segurança" não gera Guard útil — reformule com concretude
+- **Duplicadas**: duas regras dizendo a mesma coisa — o compilador vai detectar via Jaccard similarity
+
+Use a opção de preview do agente `/maes-context-add` (peça "mostre o que seria extraído sem aplicar") antes de commitar qualquer mudança.
+
+---
+
+## Após a Migração
+
+1. **Delete o `CLAUDE.md` original** — o MAES gera um novo na raiz do repositório após `maes sync`. Ter os dois cria confusão.
+
+2. **Commite o `.maes/context/human/`** — este é o novo source of truth, não o CLAUDE.md na raiz.
+
+3. **Configure o CI gate** — para garantir que o contexto migrado seja mantido atualizado:
+
+   ```bash
+   # Copiar o workflow de validação para o seu repositório
+   cp maes-validate.yml .github/workflows/
+   ```
+
+4. **Verifique com `maes doctor`**:
+
+   ```bash
+   maes doctor
+   # Deve retornar [OK] para todos os checks relevantes
+   ```
+
+---
+
+## Diferença entre MAES e CLAUDE.md Manual
+
+|                                 | CLAUDE.md manual                                  | MAES                                                        |
+| ------------------------------- | ------------------------------------------------- | ----------------------------------------------------------- |
+| Source of truth                 | O próprio `CLAUDE.md`                             | `.maes/context/human/*.md`                                  |
+| Hierarquia de prioridade        | Nenhuma (tudo tem o mesmo peso)                   | 7 layers — compliance sempre sobrescreve engineering        |
+| Staleness                       | Invisível — ninguém sabe o que está desatualizado | Rastreado por layer, CI bloqueia se layers 1–3 envelhecerem |
+| Suporte a múltiplas ferramentas | Reescrever para Cursor Rules, Windsurf, etc.      | Um source, todos os formatos gerados automaticamente        |
+| Onboarding de novo dev          | Envia o arquivo                                   | Commite `.maes/context/human/`, as ferramentas carregam     |
+| Conflitos de contexto           | Manual, invisível                                 | Detectado pelo compilador, CI bloqueia se UNRESOLVED        |

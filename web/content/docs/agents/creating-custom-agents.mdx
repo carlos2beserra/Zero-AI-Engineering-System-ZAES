@@ -1,0 +1,90 @@
+---
+title: Criando agents fixos customizados
+description: Passo a passo para definir um perfil especializado em .maes/agents/ — escopo, instruções, ferramentas e materialização por cliente.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Agents fixos são **perfis especializados** versionados em `.maes/agents/`.
+Esta página mostra como criar um do zero.
+
+## Quando criar
+
+- O time repete o **mesmo prompt** em revisões/refatorações.
+- Há **especialização clara** (segurança, performance, acessibilidade, i18n).
+- Você quer versionar o "modo de pensar" junto com o código.
+
+## Estrutura básica
+
+`.maes/agents/revisor-acessibilidade.yaml`:
+
+```yaml
+name: revisor-acessibilidade
+description: |
+  Revisor focado em WCAG 2.2 nível AA. Garante que componentes UI novos
+  ou alterados respeitam contraste, foco visível, ARIA correto e
+  navegação por teclado.
+
+inherits_context: true
+
+instructions: |
+  Para cada PR, verifique:
+  1. Contraste (4.5:1 texto normal, 3:1 grande)
+  2. Foco visível em todos os interativos
+  3. role/aria-* corretos quando o elemento nativo não basta
+  4. Navegação por teclado completa (sem mouse trap)
+  5. Texto alternativo em imagens semânticas
+
+  Cite a regra WCAG específica de cada findings (ex.: WCAG 1.4.3).
+
+  Se a feature usa um componente novo, sugira adicionar exemplo de
+  uso acessível em .maes/context/human/conventions.md.
+
+allowed_tools: [read, search]
+```
+
+## Campos
+
+| Campo              | Descrição                                              |
+| ------------------ | ------------------------------------------------------ |
+| `name`             | ID único — vira `@revisor-acessibilidade` no cliente   |
+| `description`      | Resumo visível no catálogo do cliente                  |
+| `inherits_context` | `true` (padrão) — carrega toda Context Layer compilada |
+| `instructions`     | Instruções específicas do perfil                       |
+| `allowed_tools`    | Ferramentas que o cliente pode oferecer (varia)        |
+
+## Materialização
+
+Após editar, rode:
+
+```bash
+maes sync
+```
+
+O MAES gera o agent no formato nativo de cada cliente detectado:
+
+- Claude Code → `.claude/agents/revisor-acessibilidade.md`
+- Cursor → `.cursor/rules/agents/revisor-acessibilidade.mdc`
+- Continue → adicionado em `.continue/config.yaml`
+
+## Boas práticas
+
+- **Escopo único.** Um agent, uma responsabilidade — não tente fazer
+  `@agent-faz-tudo`.
+- **Cite o contexto.** Instruções como "consulte `decisions.md` antes de
+  propor design" amarram o agent à Context Layer.
+- **Evite duplicar.** Se a regra serve a todo agent, coloque em
+  `human/principles.md` em vez de no agent específico.
+- **Revise em PR.** Agents fixos mudam comportamento — passe por code
+  review como qualquer código.
+
+<Callout type="info">
+  Agents fixos são pequenos. Se um YAML passa de 50 linhas de instructions,
+  considere se metade não deveria estar em `human/`.
+</Callout>
+
+## Próximos passos
+
+- [Agents fixos — visão geral](/docs/agents/fixed-agents)
+- [Catálogo de agents](/docs/agents/catalog)
+- [Agent Engineering](/docs/foundations/agent-engineering)

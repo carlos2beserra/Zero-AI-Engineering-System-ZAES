@@ -1,0 +1,58 @@
+---
+title: Agent Layer
+description: Como agents externos (slash) e fixos operam sobre o contexto compilado — a única camada onde LLM realmente entra.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+A **Agent Layer** é onde os modelos de linguagem finalmente entram em ação.
+As demais camadas determinísticas (Context, Compiler, Documentation,
+Governance) preparam o terreno; os agents desta camada **operam sobre ele**.
+
+## Duas classes
+
+| Classe             | O que é                                               | Instalação                |
+| ------------------ | ----------------------------------------------------- | ------------------------- |
+| **Slash externos** | Comandos chamados explicitamente (`/maes-analyze`, …) | `maes init` em 5 clientes |
+| **Agents fixos**   | Perfis especializados em `.maes/agents/*.yaml`        | Versionados pelo time     |
+
+## Slash externos
+
+Três agents universais que operam **sobre a Context Layer**:
+
+- [`/maes-analyze`](/docs/agents/maes-analyze) — diagnostica gaps no contexto.
+- [`/maes-context-add`](/docs/agents/maes-context-add) — propõe e
+  aplica edições em `human/*.md`.
+- [`/maes-eval`](/docs/agents/maes-eval) — avalia feature/PR contra o
+  contexto registrado.
+
+Cada cliente invoca de forma diferente — ver
+[catálogo](/docs/agents/catalog) para a tabela completa.
+
+## Agents fixos especializados
+
+Perfis criados pelo seu time em `.maes/agents/*.yaml`. Cada um:
+
+- **Herda** todo o contexto compilado (`inherits_context: true`).
+- **Adiciona** instruções específicas (foco em segurança, performance,
+  acessibilidade, etc.).
+- É **materializado** pelo `maes sync` no formato nativo de cada cliente.
+
+Ver [Criando agents customizados](/docs/agents/creating-custom-agents).
+
+## Fronteira clara
+
+A Agent Layer **não decide** o que está no contexto — isso é trabalho da
+Context Layer. Ela apenas **consome e opera**. Isso garante que mudar
+modelo, cliente ou prompt **não invalida** o contexto registrado.
+
+<Callout type="info">
+  Toda LLM call do ecossistema MAES acontece nesta camada. Compiler,
+  Documentation e Governance Layers são 100% determinísticas.
+</Callout>
+
+## Próximos passos
+
+- [Catálogo de agents](/docs/agents/catalog)
+- [Agents fixos](/docs/agents/fixed-agents)
+- [As 6 camadas](/docs/architecture/overview)

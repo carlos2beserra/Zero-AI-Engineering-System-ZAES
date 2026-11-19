@@ -1,0 +1,181 @@
+---
+title: "Glossário"
+description: "Termos do MAES e seus significados — atualizado para a arquitetura CLI + compiler pipeline."
+---
+
+## A
+
+**ADR (Architectural Decision Record)**
+Registro de uma decisão arquitetural ou técnica significativa, com contexto, alternativas descartadas e consequências. No MAES, registrado como DEC-NNN em `.maes/context/human/decisions.md`.
+
+**ADR Trigger**
+Padrão em um diff de PR que sugere que uma decisão arquitetural foi tomada — por exemplo, uma migration destrutiva, nova dependência de infraestrutura ou mudança de contrato de API. Detectado automaticamente pelo workflow `maes-adr-detect.yml`.
+
+**Assertion**
+Unidade básica de conhecimento compilada pelo MAES. Uma assertion representa um fato sobre o sistema e contém os campos: `claim` (o fato em si), `layer` (1-7, indicando prioridade), `confidence` (valor entre 0 e 1), `paths` (arquivos de código afetados) e `domains` (domínios de negócio relacionados). Assertions são geradas pelo compilador a partir dos arquivos `human/` e `inferred/` e armazenadas em `synthesis/assertions.json`.
+
+---
+
+## C
+
+**Cold Context**
+Contexto disponível via MCP Server sob demanda. Não há budget fixo de tokens — o conteúdo é carregado apenas quando explicitamente solicitado por uma ferramenta de IA através do protocolo MCP. Corresponde ao acesso a dados detalhados que não cabe no contexto quente ou morno.
+
+**Compiler Pipeline**
+Os 7 estágios pelos quais o MAES processa o contexto bruto até gerar os adapters para cada ferramenta de IA: INGEST → NORMALIZE → DEDUPLICATE → LAYER → CONFLICT → COMPILE → ADAPTERS. Executado pelo comando `maes sync`.
+
+**CONFLICT**
+Quinto estágio do compiler pipeline. O compilador detecta assertions contraditórias entre layers e as registra em `synthesis/conflicts.json`. Conflitos com status UNRESOLVED bloqueiam CI até que sejam resolvidos por um humano.
+
+**Context Drift**
+Divergência entre o que os arquivos de contexto descrevem e o que o sistema realmente faz. Tratado como bug — quando ocorre, a IA gera código baseado em premissas incorretas. Monitorado pelo staleness score de cada assertion.
+
+**Context Engineering**
+Prática de estruturar, versionar e compilar contexto para ferramentas de IA de forma deliberada. O MAES é uma implementação de context engineering para times de engenharia — não é um agente, não executa código, é infraestrutura.
+
+---
+
+## D
+
+**DEC-NNN**
+Formato de ID para decisões arquiteturais. `DEC-001`, `DEC-002`, etc. Registradas em `.maes/context/human/decisions.md` como entradas ADR.
+
+---
+
+## E
+
+**Eval**
+Processo de avaliação LLM-as-judge que mede se o contexto MAES muda o comportamento da IA para melhor. O agent `/maes-eval` executa cada cenário com e sem contexto MAES e compara as respostas. Pass threshold: 70% dos cenários mostram delta positivo. Resultados (com aprovação) em `.maes/evals/results/<timestamp>.json`. Não confundir com o eval de PR em CI (`eval-pr.py`), que pontua o diff contra um rubric — mecanismo distinto.
+
+---
+
+## F
+
+**Fresh / Aging / Stale / Critical**
+Classificações de staleness baseadas no staleness score calculado pelo compilador:
+
+- **Fresh:** score baixo — assertion está atualizada
+- **Aging:** score moderado — considerar revisão
+- **Stale:** score alto — revisão necessária
+- **Critical:** score muito alto — CI pode bloquear
+
+---
+
+## G
+
+**Guard**
+Regra gerada pelo compilador que monitora paths específicos de código. Existem dois tipos: `enforcement` (bloqueia a ação — CI falha se violado) e `contextual` (informa a IA sobre restrições sem bloquear automaticamente). Guards são armazenados em `synthesis/guards.json` e consultados via `maes_check_guard` no MCP Server.
+
+---
+
+## H
+
+**Hot Context**
+Contexto das layers 1-3 (Compliance, Security, Contracts), sempre injetado em todo prompt enviado para a IA. Budget máximo: 800 tokens. Exceder este budget causa falha em `maes validate`.
+
+**human/**
+Diretório curado pelo time em `.maes/context/human/`. Contém os 5 arquivos de contexto organizacional: `compliance.md`, `integrations.md`, `decisions.md`, `business-rules.md` e `principles.md`. É a fonte de verdade escrita por humanos — diferente de `inferred/`, que é gerado automaticamente.
+
+---
+
+## I
+
+**INGEST**
+Primeiro estágio do compiler pipeline. O compilador lê todos os arquivos de `.maes/context/human/` e `.maes/context/inferred/` e os carrega na memória para processamento.
+
+**inferred/**
+Diretório em `.maes/context/inferred/` populado pelo agente externo `/maes-analyze` (instalado por `maes init` no seu cliente de IA). Contém análise do codebase: `gaps.json` (ai_likely_mistakes, behavior_contracts), `patterns.json`, `data-model.json`, `stack.json` e `modules.json`. Nunca editar diretamente — será sobrescrito na próxima execução do agente.
+
+---
+
+## L
+
+**LAYER**
+Quarto estágio do compiler pipeline. Cada assertion é atribuída a uma das 7 layers de prioridade com base no arquivo de origem, determinando sua precedência em caso de conflito.
+
+**LLM-as-Judge**
+Técnica de usar um LLM para avaliar o output de outro LLM. O agent `/maes-eval` usa esta técnica para comparar respostas geradas com e sem contexto MAES, calculando um delta de qualidade por cenário. O eval de PR em CI (`eval-pr.py`) também a usa, mas para pontuar o diff de um PR contra um rubric.
+
+---
+
+## M
+
+**MAES (Maxxi AI Engineering System)**
+Context Compiler for AI-Assisted Engineering. Não é um LLM, não é um agente autônomo — é um compilador que transforma contexto organizacional estruturado em instruções precisas para ferramentas de IA. Pipeline: INGEST → NORMALIZE → DEDUPLICATE → LAYER → CONFLICT → COMPILE → ADAPTERS.
+
+---
+
+## N
+
+**NORMALIZE**
+Segundo estágio do compiler pipeline. O compilador padroniza o formato das assertions lidas, convertendo diferentes estilos de markdown e JSON em uma representação interna uniforme.
+
+---
+
+## O
+
+**OWNERSHIP.yaml**
+Arquivo em `.maes/OWNERSHIP.yaml` que define os responsáveis por cada layer de contexto. Usado por `maes validate` para exibir o owner quando uma layer apresenta staleness elevado, facilitando a atribuição de responsabilidade de atualização.
+
+---
+
+## P
+
+**Priority Layers (7 Layers)**
+Hierarquia de prioridade das assertions compiladas pelo MAES:
+
+| Layer | Nome         | Arquivo fonte     |
+| ----- | ------------ | ----------------- |
+| 1     | Compliance   | compliance.md     |
+| 2     | Security     | compliance.md     |
+| 3     | Contracts    | integrations.md   |
+| 4     | Architecture | decisions.md      |
+| 5     | Domain       | business-rules.md |
+| 6     | Engineering  | principles.md     |
+| 7     | Inferred     | inferred/\*.json  |
+
+Em caso de conflito, layers com número menor têm prioridade absoluta.
+
+---
+
+## S
+
+**Staleness Score**
+Valor entre 0 e 1 indicando o quanto uma assertion está desatualizada. Calculado com base em dois fatores: tempo desde a última edição do arquivo de origem e número de mudanças de código nos `paths` cobertos pela assertion. Score próximo a 1 indica assertion crítica — provavelmente desatualizada em relação ao estado real do código.
+
+**synthesis/**
+Diretório em `.maes/synthesis/` gerado por `maes sync`. Contém os artefatos do compilador: `assertions.json`, `guards.json`, `anti-hallucination.json`, `conflicts.json` e `staleness.json`. Nunca editar diretamente — qualquer edição manual será sobrescrita na próxima execução de `maes sync`.
+
+---
+
+## T
+
+**TASK-NNN**
+Formato de ID para task files. `TASK-001`, `TASK-042`, etc. Armazenados em `.maes/tasks/`. O ID no título do PR ativa o eval automático no GitHub Actions.
+
+**Task File**
+Documento estruturado (TASK-NNN.md) que descreve uma unidade de trabalho: objetivo, escopo, contratos afetados e critérios de aceite. Serve como especificação para a IA e como unidade de rastreabilidade. Usado por `maes explain context --task` e, como task de referência, pelo eval de PR em CI (`eval-pr.py --task`). Não confundir com cenários de eval: estes são arquivos `.eval.yaml` separados, lidos pelo agent `/maes-eval`.
+
+**Token Budget**
+Quantidade de tokens disponível para contexto em cada tier. Hot context: máximo 800 tokens (layers 1-3). Warm context: máximo 4000 tokens (layers 4-6). Exceder o budget do hot context causa falha em `maes validate`.
+
+---
+
+## U
+
+**UNRESOLVED**
+Status de um conflito entre assertions que requer decisão humana antes de ser resolvido. Um conflito UNRESOLVED bloqueia CI — `maes validate` falha enquanto houver conflitos neste estado em `synthesis/conflicts.json`. Para resolver, edite os arquivos `human/` conflitantes e execute `maes sync` novamente.
+
+---
+
+## V
+
+**Vibe Coding**
+Anti-padrão de usar a IA sem contexto estruturado — enviando prompts vagos e aceitando o primeiro output sem revisão. Resultado: código inconsistente, sem aderência aos padrões do projeto. O MAES existe para combater vibe coding em contexto de time através de contexto compilado e injetado sistematicamente.
+
+---
+
+## W
+
+**Warm Context**
+Contexto das layers 4-6 (Architecture, Domain, Engineering), injetado por relevância à tarefa sendo executada. Budget máximo: 4000 tokens. Diferente do hot context, o warm context é selecionado dinamicamente com base na similaridade entre as assertions e a descrição da tarefa atual.

@@ -1,0 +1,196 @@
+---
+title: Operational Runbook
+description: Failure modes, limitações conhecidas, modelo de segurança e procedimentos de recovery para operação do MAES em produção.
+---
+
+Este documento é para engineers que precisam entender os limites do sistema e o que fazer quando algo dá errado — antes de adotar o MAES em produção.
+
+## Limitações Conhecidas
+
+### Tamanho do repositório no agente `/maes-analyze`
+
+O agente externo `/maes-analyze` (instalado por `maes init` no seu cliente de IA) opera dentro dos limites de contexto do próprio cliente. Em repositórios grandes, oriente o agente sobre quais módulos priorizar (por exemplo, “foque em `src/payments/**` e `src/orders/**`”) para evitar truncá-lo. O CLI `maes` em si **não** coleta código — toda a leitura acontece via cliente de IA.
+
+### Token budget do hot context
+
+O hot context tem **hard cap de 800 tokens**. Se as assertions de layers 1–3 ultrapassarem esse limite, o `maes sync` trunca automaticamente pelas assertions de menor prioridade dentro do tier. Para auditar quanto está ocupando:
+
+```bash
+maes explain status      # mostra usage atual do hot context em tokens
+maes audit               # score 0-100 com saturation do hot context
+```
+
+### Deduplicação lexical, não semântica
+
+O deduplicador usa Jaccard similarity (threshold 0.85) sobre palavras. Duas assertions com o mesmo significado mas vocabulário diferente **não são reconhecidas como duplicatas**:
+
+```
+"Never log full credit card numbers"
+"Credit card data must not be written to application logs"
+```
+
+Isso significa que o knowledge base pode acumular variações semânticas. Use `maes explain status` periodicamente para identificar assertions similares.
+
+### Conflitos entre layers diferentes
+
+Conflitos entre assertions de layers diferentes são **auto-resolvidos** com a layer de menor número vencendo. O registro fica em `synthesis/conflicts.json` com status `RESOLVED`. O CI não bloqueia — mas é bom revisar conflitos resolvidos periodicamente:
+
+```bash
+maes explain conflict --id <id>   # ver detalhes de um conflito específico
+```
+
+---
+
+## Failure Modes e Recovery
+
+### `synthesis/` deletada ou corrompida
+
+**Sintoma:** `maes validate` retorna erro de arquivo não encontrado, ou assertions.json está vazio.
+
+**Recovery:**
+
+```bash
+maes sync   # regenera synthesis/ do zero a partir de context/human/ e context/inferred/
+```
+
+`synthesis/` é inteiramente derivada — sempre pode ser regenerada. Se o resultado parecer errado depois do sync, compare com o último commit do `context/human/`:
+
+```bash
+git diff HEAD -- .maes/context/human/
+```
+
+### CI bloqueado por UNRESOLVED conflict
+
+**Sintoma:** `maes validate` retorna exit 1 com lista de conflitos UNRESOLVED.
+
+**Como resolver:**
+
+```bash
+# 1. Ver quais assertions estão em conflito
+maes explain conflict --id <id>
+
+# 2. Editar o arquivo human/ relevante para eliminar a contradição
+# (uma das assertions precisa ser removida ou reformulada)
+
+# 3. Recompilar
+maes sync
+
+# 4. Confirmar que não há mais UNRESOLVED
+maes validate
+```
+
+**Escape hatch de emergência** (somente se o conflito for falso positivo e a entrega for urgente):
+
+Edite `synthesis/conflicts.json` e mude o status do conflito para `RESOLVED` com um rationale temporário. **Isso é um hotfix não auditável** — documente imediatamente em `decisions.md` e abra uma issue para resolver a causa raiz.
+
+### CI bloqueado por staleness em layers 1–3
+
+**Sintoma:** `maes validate` retorna exit 1 com `staleness_score >= 0.8` em compliance, security ou contracts.
+
+**Recovery:**
+
+```bash
+# 1. Ver quais assertions estão stale
+maes explain status
+
+# 2. Abrir o arquivo relevante
+# compliance.md, integrations.md, ou decisions.md
+
+# 3. Verificar se a regra ainda é válida
+# Se sim: atualizar a data de last_verified no frontmatter
+# Se não: remover ou arquivar a assertion
+
+# 4. Recompilar e validar
+maes sync && maes validate
+```
+
+Se a validação de staleness estiver bloqueando o CI mas o conteúdo ainda é válido, a data de `last_verified` no frontmatter está defasada. Atualize e commite.
+
+### Adapters com conteúdo incorreto após sync
+
+**Sintoma:** `CLAUDE.md` foi gerado com regras erradas ou está faltando assertions esperadas.
+
+**Recovery:**
+
+```bash
+# Reverter os adapters para o estado do último commit
+git checkout -- CLAUDE.md .cursor/rules/ .windsurfrules .github/copilot-instructions.md
+
+# Investigar o que causou a geração incorreta
+maes explain status
+maes explain context --agent maes-review --task "qualquer tarefa"
+
+# Depois de identificar e corrigir a causa em context/human/
+maes sync
+```
+
+---
+
+## Modelo de Segurança
+
+### O que o MAES protege
+
+- **Drift organizacional:** regras de compliance e arquitetura que ficam desatualizadas silenciosamente enquanto a IA continua sendo usada
+- **Inconsistência de contexto:** diferentes devs recebendo regras diferentes da IA dependendo de qual CLAUDE.md encontraram
+- **Perda de rationale:** decisões arquiteturais que saem da cabeça das pessoas e nunca chegam no contexto da IA
+
+### O que o MAES não protege
+
+**Prompt injection via context manipulation.** Os arquivos em `.maes/context/human/` são arquivos no repositório Git — têm o mesmo nível de confiança que qualquer outro arquivo. Um commit malicioso que insira uma instrução maliciosa em `compliance.md` será compilado e injetado nos adapters da IA.
+
+A mitigação é a mesma de qualquer arquivo de configuração crítico: code review obrigatório em PRs que modificam `.maes/context/human/`, CODEOWNERS para esses arquivos, e branch protection com aprovação de responsável pela layer.
+
+```bash
+# .github/CODEOWNERS
+.maes/context/human/compliance.md    @security-team
+.maes/context/human/integrations.md  @integrations-team
+```
+
+**Qualidade das assertions.** O MAES não valida se as regras fazem sentido — apenas que são sintaticamente válidas e não têm conflitos UNRESOLVED. Uma assertion ambígua, imprecisa ou factualmente errada é compilada e injetada normalmente.
+
+**Comportamento do modelo.** O MAES injeta contexto — não controla o modelo. Um modelo pode ignorar uma regra do hot context em determinadas condições. Use o agent `/maes-eval` para medir empiricamente se as assertions estão sendo seguidas.
+
+---
+
+## Auditabilidade e Observabilidade
+
+### Ver o que está no contexto compilado
+
+```bash
+maes explain status                              # visão geral: layers, staleness, token usage
+maes explain guard --path "src/payments/**"      # quais guards ativam nesse path
+maes explain context --agent maes-review   # contexto que um agent receberia
+maes explain conflict --id <id>                  # detalhes de um conflito
+maes audit                                       # score 0-100 com detalhamento
+```
+
+### Verificar quais arquivos influenciam uma assertion
+
+Cada assertion em `synthesis/assertions.json` tem um campo `source` que aponta para o arquivo de origem em `context/human/` ou `context/inferred/`.
+
+### Histórico de mudanças no context
+
+Como `context/human/` é versionado em Git, o histórico completo está disponível:
+
+```bash
+git log --oneline -- .maes/context/human/
+git diff HEAD~5 -- .maes/context/human/compliance.md
+```
+
+`context/inferred/` é atualizado pelo agente externo `/maes-analyze` rodando no seu cliente de IA. Mantenha esses arquivos versionados em Git para preservar o histórico de análises arquiteturais.
+
+---
+
+## Perguntas Frequentes de Engineers Sênior
+
+**Por que o compilador é determinístico?**
+Para que o resultado do `maes sync` seja previsível e auditável. Dado o mesmo `context/human/` e `context/inferred/`, a saída em `synthesis/` é sempre idêntica bit a bit. Isso torna possível usar `maes sync` em CI sem preocupação com resultados não-determinísticos.
+
+**O que acontece se dois devs rodarem `maes sync` simultaneamente?**
+`maes sync` lê de `context/human/` e `context/inferred/` e escreve em `synthesis/` e nos adapters. É idempotente — dois runs simultâneos produzem o mesmo resultado. Não há estado compartilhado além dos arquivos no repositório.
+
+**Como escalar para múltiplos times com contexts diferentes?**
+Ver [Multi-Squad](/docs/advanced/multi-squad) para padrões com mono-repos e múltiplos repositórios.
+
+**O MCP server é stateful?**
+Não. O `maes serve` lê `synthesis/` a cada requisição — não mantém estado de sessão. Isso significa que reiniciar o servidor não afeta nada, e todos os clients MCP recebem o mesmo contexto determinístico.

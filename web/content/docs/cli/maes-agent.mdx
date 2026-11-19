@@ -1,0 +1,270 @@
+---
+title: "Configurando CI/CD — Guia Passo a Passo"
+description: "Como configurar o pipeline de CI/CD do MAES no seu projeto, do gate obrigatório à governança periódica."
+---
+
+## Pré-condição
+
+Este guia assume que o `.maes/` já foi inicializado no projeto. Se ainda não foi:
+
+```bash
+maes init
+# ou
+maes init && maes sync   # depois rode /maes-analyze no seu cliente de IA
+```
+
+O `.maes/` precisa existir com pelo menos os arquivos `config.yaml`, `OWNERSHIP.yaml` e os arquivos em `context/human/` (podem estar com conteúdo mínimo — o CI funciona mesmo com templates vazios).
+
+---
+
+## Passo 1: criar o CI gate obrigatório
+
+O workflow `maes-validate.yml` é o único obrigatório. Ele roda o compilador MAES e valida o contexto a cada mudança nos arquivos `.maes/`. Sem ele, não há garantia de que os adapters gerados (`CLAUDE.md`, `.cursor/rules/`, etc.) estejam em sincronia com a fonte de verdade.
+
+Copie o arquivo para `.github/workflows/`:
+
+```bash
+# Se instalou o MAES via maes init, o arquivo já está lá.
+# Caso contrário, copie manualmente:
+mkdir -p .github/workflows
+cp template/.github/workflows/maes-validate.yml .github/workflows/
+```
+
+Conteúdo do workflow:
+
+```yaml
+name: MAES Validate Context
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+  pull_request:
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install anthropic pyyaml
+      - run: python -m maes sync
+      - run: python -m maes validate
+```
+
+Agora commite os arquivos necessários para o CI funcionar:
+
+```bash
+# Commitar a estrutura .maes/ inicial
+git add .maes/config.yaml
+git add .maes/OWNERSHIP.yaml
+git add .maes/context/human/compliance.md
+git add .maes/context/human/integrations.md
+git add .maes/context/human/decisions.md
+git add .maes/context/human/business-rules.md
+git add .maes/context/human/principles.md
+
+# Commitar os adapters gerados
+git add CLAUDE.md
+git add .cursor/rules/maes-context.mdc
+git add .windsurfrules
+git add ".github/copilot-instructions.md"
+git add .github/workflows/maes-validate.yml
+
+git commit -m "feat(maes): inicializar contexto compilado e CI gate"
+```
+
+<Callout type="info">
+  Os arquivos `human/*.md` podem estar com conteúdo mínimo (templates) no commit
+  inicial. O CI gate funciona mesmo assim — o importante é que os arquivos
+  existam e não haja conflitos UNRESOLVED.
+</Callout>
+
+---
+
+## Passo 2: configurar secrets no GitHub
+
+Navegue até: **GitHub → Settings → Secrets and variables → Actions → New repository secret**
+
+**`ANTHROPIC_API_KEY`** — necessário para os workflows que usam LLM (eval).
+
+```
+Nome:  ANTHROPIC_API_KEY
+Valor: sk-ant-api03-...
+```
+
+**`GITHUB_TOKEN`** — disponível automaticamente em todos os Actions. Não precisa configurar manualmente.
+
+Para verificar que o secret está configurado corretamente, dispare o `maes-validate.yml` manualmente via GitHub Actions → selecione o workflow → Run workflow. Ele não usa LLM, então funciona mesmo sem a API key.
+
+---
+
+## Passo 3 (opcional): adicionar workflows de qualidade por PR
+
+Com o gate obrigatório no lugar, você pode adicionar workflows que enriquecem o processo de review sem bloquear merges.
+
+**`maes-eval.yml` — LLM-as-judge:**
+
+```bash
+cp template/.github/workflows/maes-eval.yml .github/workflows/
+git add .github/workflows/maes-eval.yml
+git commit -m "ci(maes): adicionar LLM-as-judge em PRs"
+```
+
+Requer `ANTHROPIC_API_KEY`. A cada PR aberto, avalia o diff e posta um score de qualidade como comentário. Por padrão não bloqueia merge — para ativar blocking em scores baixos, configure `MAES_EVAL_BLOCK_ON_POOR=true` em Settings → Variables → Actions.
+
+**`/maes-context-add` — sugestões automáticas:**
+
+Use o agente externo `/maes-context-add` no seu cliente de IA para extrair e atualizar `human/*.md` com base no diff do PR.
+
+Não requer workflow dedicado no template atual.
+
+**`maes-adr-detect.yml` — detecção de ADRs:**
+
+```bash
+cp template/.github/workflows/maes-adr-detect.yml .github/workflows/
+git add .github/workflows/maes-adr-detect.yml
+git commit -m "ci(maes): adicionar detecção de mudanças arquiteturais"
+```
+
+Não requer LLM. Detecta migrations de banco, mudanças em contratos de API e infraestrutura, e sugere registro em `decisions.md`.
+
+---
+
+## Passo 4 (opcional): workflows de governança periódica
+
+Workflows que rodam semanalmente e fornecem visibilidade de saúde do contexto e métricas de processo.
+
+**`maes-governance.yml` — dashboard semanal:**
+
+```bash
+cp template/.github/workflows/maes-governance.yml .github/workflows/
+git add .github/workflows/maes-governance.yml
+git commit -m "ci(maes): adicionar dashboard semanal de saúde do contexto"
+```
+
+Roda toda segunda-feira às 9h30 UTC. Publica no Step Summary do workflow run (não cria issues).
+
+**`maes-metrics.yml` — métricas semanais:**
+
+```bash
+cp template/.github/workflows/maes-metrics.yml .github/workflows/
+git add .github/workflows/maes-metrics.yml
+git commit -m "ci(maes): adicionar coleta semanal de métricas de processo"
+```
+
+Roda toda segunda-feira às 9h UTC (30min antes do governance).
+
+**`maes-context-snapshot.yml` — snapshot por release:**
+
+```bash
+cp template/.github/workflows/maes-context-snapshot.yml .github/workflows/
+git add .github/workflows/maes-context-snapshot.yml
+git commit -m "ci(maes): adicionar snapshot de contexto por release"
+```
+
+---
+
+## Progressão recomendada para times
+
+A adoção gradual reduz atrito e permite que o time desenvolva os hábitos corretos antes de adicionar mais automações.
+
+**Semana 1: o essencial**
+
+- Ativar apenas `maes-validate.yml`
+- Preencher `compliance.md` e `decisions.md` com as primeiras regras reais
+- Rodar `maes sync` e commitar os adapters gerados
+- Verificar que o CI gate passa
+
+**Semana 2: assistência no PR**
+
+- Reforçar uso de `/maes-context-add` em PRs
+- O time começa a receber sugestões automáticas de atualização de contexto
+- Habituar o fluxo: editar `human/*.md` como parte de features
+
+**Semana 4: qualidade**
+
+- Adicionar `maes-eval.yml` (LLM-as-judge via CI) ou invocar `/maes-eval` no cliente de IA
+- O time já tem familiaridade com o contexto MAES — a avaliação de delta faz sentido agora
+- Opcional: ativar `MAES_EVAL_BLOCK_ON_POOR=true` se o time quiser gate de qualidade
+
+**Mês 2: visibilidade**
+
+- Adicionar `maes-governance.yml` e `maes-metrics.yml`
+- Dashboards semanais no Step Summary dos workflows
+
+---
+
+## Troubleshooting do CI
+
+**`maes validate` falha com conflito UNRESOLVED:**
+
+```
+CONFLITO UNRESOLVED: decisions.md e business-rules.md têm assertions contraditórias sobre rate limiting.
+```
+
+Abra os dois arquivos e resolva a contradição editando um deles para que as regras sejam consistentes. Em seguida:
+
+```bash
+maes sync
+maes validate  # deve passar agora
+git add .maes/context/human/ && git commit -m "docs(maes): resolver conflito de rate limiting"
+```
+
+**`maes validate` falha com staleness crítico:**
+
+```
+compliance.md: staleness 0.87 (threshold: 0.80)
+```
+
+O arquivo não foi atualizado em muito tempo. Revise o conteúdo, faça uma edição (mesmo que apenas para confirmar que o conteúdo ainda é válido) e commite:
+
+```bash
+nano .maes/context/human/compliance.md
+# Adicionar data de revisão ou atualizar conteúdo
+maes sync
+git add .maes/context/human/compliance.md && git commit -m "docs(maes): revisar compliance.md"
+```
+
+**`maes sync` no CI falha com `ModuleNotFoundError`:**
+
+Verifique se o passo de instalação no workflow está correto:
+
+```yaml
+- run: pip install anthropic pyyaml
+```
+
+Para projetos com `requirements.txt` que inclui todas as dependências MAES:
+
+```yaml
+- run: pip install -r scripts/requirements.txt
+```
+
+**Workflow não dispara após push:**
+
+Verifique se os arquivos modificados estão nos paths configurados no `on.push.paths`:
+
+```yaml
+paths:
+  - ".maes/context/**"
+  - ".maes/config.yaml"
+  - ".maes/OWNERSHIP.yaml"
+```
+
+Se você alterou apenas `CLAUDE.md` (um adapter gerado), o workflow não dispara — isso é intencional. O CI gate monitora a fonte de verdade, não os adapters.
+
+---
+
+## Onde ir a seguir
+
+- Referência de todos os workflows — [GitHub Actions](/docs/ci/github-actions)
+- Referência de todos os scripts CI — [Scripts de CI](/docs/ci/scripts)
+- Referência completa do CLI — [Referência do CLI](/docs/cli/reference)

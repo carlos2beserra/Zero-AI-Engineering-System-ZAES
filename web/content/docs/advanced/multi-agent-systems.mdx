@@ -1,0 +1,78 @@
+---
+title: Sistemas Multi-Agent com MAES
+description: Como compor /maes-analyze, /maes-context-add, /maes-eval e agents fixos para fluxos de trabalho mais sofisticados.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+MAES não força um modelo "um agent por sessão". Você pode **compor** agents
+externos e agents fixos para fluxos sofisticados — sempre operando sobre a
+mesma Context Layer compilada.
+
+## Padrões comuns
+
+### 1. Análise → Atualização → Validação
+
+Fluxo quinzenal/mensal de manutenção de contexto:
+
+```
+/maes-analyze
+   ↓ relatório de gaps
+/maes-context-add
+   ↓ aplica patches em human/
+maes sync
+   ↓ adapters regenerados
+/maes-eval
+   ↓ valida que o contexto novo muda comportamento
+```
+
+### 2. Feature dev com revisor especializado
+
+```
+@arquiteto          → propõe design citando DEC-XXX
+(você implementa)
+@revisor-seguranca  → review focado em OWASP/compliance
+/maes-eval          → score final contra o contexto
+```
+
+### 3. Onboarding de novo dev
+
+```
+@onboarding-buddy   → explica módulo X usando inferred/modules.md
+@arquiteto          → contexto histórico das decisões em decisions.md
+```
+
+## Por que funciona
+
+Todos os agents (externos e fixos) **herdam a mesma Context Layer compilada**.
+Não há divergência entre "o que `@arquiteto` sabe" e "o que `/maes-eval`
+sabe" — ambos veem o mesmo `decisions.md`, o mesmo `compliance.md`, o
+mesmo OWNERSHIP.
+
+## Coordenação via MCP
+
+Para fluxos onde múltiplos agents precisam consultar o mesmo estado
+dinâmico (ex.: "qual módulo está sob review agora"), use o
+[servidor MCP](/docs/mcp/what-is-mcp) — ele entrega os resources e cada
+agent consulta sob demanda.
+
+<Callout type="info">
+  Multi-agent não significa "agents conversando entre si autonomamente". No MAES
+  significa **você orquestrando** uma sequência de agents especializados que
+  compartilham contexto.
+</Callout>
+
+## Anti-padrões
+
+- ❌ Agent fixo que **reescreve** contexto sem passar por
+  `/maes-context-add`.
+- ❌ Agents com instruções conflitantes (`@revisor-permissivo` vs
+  `@revisor-rigoroso` no mesmo repo).
+- ❌ Pular `maes sync` entre etapas — o próximo agent verá contexto
+  desatualizado.
+
+## Próximos passos
+
+- [Catálogo de agents](/docs/agents/catalog)
+- [Agents fixos](/docs/agents/fixed-agents)
+- [Setup MCP por cliente](/docs/mcp/setup-per-client)

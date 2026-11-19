@@ -1,0 +1,186 @@
+---
+title: "Configuração Avançada"
+description: "Múltiplos repositórios, providers de LLM, OWNERSHIP.yaml e opções avançadas do config.yaml."
+---
+
+## Múltiplos Repositórios
+
+O MAES foi projetado para operar em nível de repositório. Cada repositório tem seu próprio `.maes/` independente — não há sincronização automática entre repositórios na V1.
+
+**Mono-repo:** Em um mono-repo, o `.maes/` fica na raiz e cobre todos os pacotes e serviços. O agente externo `/maes-analyze` (instalado por `maes init` no seu cliente de IA) analisa o codebase inteiro e popula `context/inferred/`. Os adapters gerados (CLAUDE.md na raiz, .cursor/rules/) se aplicam a todas as sessões abertas na raiz do repositório.
+
+**Múltiplos repos separados:** Cada repositório tem seu `.maes/` independente com seu próprio contexto, adapters e evals. Não há mecanismo automático de sincronização entre eles na V1.
+
+**Para compartilhar contexto entre repos:** A forma suportada na V1 é copiar arquivos `human/*.md` manualmente entre repositórios e executar `maes sync` em cada um. Por exemplo, se `compliance.md` define regras de LGPD que se aplicam a todos os repositórios da organização, mantenha uma cópia canônica e distribua manualmente quando houver atualização.
+
+```bash
+# Copiar compliance do repo central para repo de serviço
+cp ../repo-central/.maes/context/human/compliance.md .maes/context/human/compliance.md
+maes sync
+```
+
+Esta abordagem manual é intencional na V1: evita sincronização automática que poderia sobrescrever customizações locais sem aviso. Sincronização automática entre repos está planejada para versões futuras.
+
+---
+
+## Providers de LLM para Scripts de CI
+
+O CLI `maes` é 100% determinístico — não chama LLM. Os agentes externos
+(`/maes-analyze`, `/maes-context-add`, `/maes-eval`) usam o provider do seu
+próprio cliente de IA (Claude Code, Cursor, Copilot, etc.) — não requerem
+variáveis de ambiente do MAES.
+
+Para os **scripts de CI** (`eval-pr.py`, `governance-report.py`, etc.),
+configure as API keys como secrets no repositório GitHub:
+
+| Provider           | Secret              | Qualidade | Custo                | Quando usar                    |
+| ------------------ | ------------------- | --------- | -------------------- | ------------------------------ |
+| Anthropic (padrão) | `ANTHROPIC_API_KEY` | Melhor    | Pago por token       | Evals críticos em CI           |
+| GitHub Models      | `GITHUB_TOKEN`      | Boa       | Gratuito com Copilot | Times com GitHub Copilot ativo |
+| Google Gemini      | `GEMINI_API_KEY`    | Boa       | Pago / free tier     | Alternativa, experimentação    |
+
+Adicione os secrets em **Settings → Secrets and variables → Actions** no repositório.
+
+<Callout type="info">
+  Evals locais (com histórico no chat) usam o agente `/maes-eval` no seu cliente
+  de IA — sem API key adicional. API keys são necessárias apenas para os scripts
+  de CI que rodam em GitHub Actions.
+</Callout>
+
+---
+
+## Configurando OWNERSHIP.yaml
+
+O arquivo `.maes/OWNERSHIP.yaml` define os responsáveis por cada layer de contexto. Quando `maes validate` detecta staleness crítico em uma layer, exibe o nome do owner para facilitar a atribuição.
+
+### Formato Completo
+
+```yaml
+ownership:
+  # Layers por número
+  layer_1_compliance: "Legal Team / compliance@empresa.com"
+  layer_2_security: "Security Engineer / @handle-no-github"
+  layer_3_contracts: "Platform Squad / platform-lead@empresa.com"
+  layer_4_architecture: "Tech Lead / @tech-lead"
+  layer_5_domain: "Payments Squad / payments-lead@empresa.com"
+  layer_6_engineering: "Tech Lead / @tech-lead"
+  layer_7_inferred: "automático — invocar /maes-analyze no cliente de IA"
+
+  # Granularidade por path (opcional)
+  paths:
+    "src/payments/**": "Payments Squad"
+    "src/auth/**": "Security Engineer"
+    "src/users/**": "Platform Squad"
+
+  # Granularidade por domínio (opcional)
+  domains:
+    "billing": "Payments Squad / @payments-lead"
+    "authentication": "Security Engineer / @sec-eng"
+    "user-management": "Platform Squad / @platform-lead"
+```
+
+### Como o Ownership é Usado
+
+Quando `maes validate` falha por staleness em uma layer, o output inclui:
+
+```
+FALHA: Layer 5 (Domain) — staleness score: 0.87 (crítico)
+Owner: Payments Squad / payments-lead@empresa.com
+Arquivo: .maes/context/human/business-rules.md
+Última modificação: 45 dias atrás
+Ação: Atualizar business-rules.md e executar maes sync
+```
+
+O OWNERSHIP.yaml não restringe quem pode editar os arquivos — é informativo. Qualquer dev pode editar `human/` e fazer um PR. A ownership indica quem deve ser notificado ou aprovador quando a layer está desatualizada.
+
+### Granularidade Recomendada
+
+Para times pequenos (até 8 devs), use apenas a granularidade por layer — é suficiente e simples de manter.
+
+Para times maiores com múltiplos squads responsáveis por domínios diferentes, adicione a granularidade por `domains`. A seção `paths` é útil em mono-repos com separação clara de responsabilidade por diretório.
+
+---
+
+## config.yaml — Opções Avançadas
+
+O arquivo `.maes/config.yaml` gerado por `maes init` contém as configurações básicas do projeto. As seções avançadas são opcionais.
+
+### Configuração de Adapters
+
+Defina quais adapters serão gerados por `maes sync`:
+
+```yaml
+project:
+  name: "meu-projeto"
+  description: "Descrição curta do projeto"
+  domain: "fintech" # usado pelo compilador para contextualizar análises
+
+adapters:
+  claude: true # Gera CLAUDE.md na raiz
+  cursor: true # Gera .cursor/rules/maes.mdc
+  copilot: true # Gera .github/copilot-instructions.md
+  windsurf: false # Não gera .windsurfrules (padrão: false)
+```
+
+Se você usa apenas Claude Code, desative os outros adapters para reduzir o tempo de `maes sync` e evitar arquivos desnecessários no repositório.
+
+### Token Budgets
+
+Os budgets padrão seguem a especificação do MAES (hot: 800 tokens, warm: 4000 tokens). Para ajustar:
+
+```yaml
+budgets:
+  hot_context_tokens: 800 # layers 1-3, sempre carregado
+  warm_context_tokens: 4000 # layers 4-6, por relevância
+```
+
+<Callout type="info">
+  Aumentar o hot context acima de 800 tokens pode degradar a qualidade das
+  respostas da IA em ferramentas com janela de contexto menor. Reduza o hot
+  context se estiver usando ferramentas com limite de contexto restrito.
+</Callout>
+
+Diminuir o budget do hot context abaixo de 400 tokens pode fazer com que regras críticas de compliance e segurança não caibam — o compilador emite um aviso se isso ocorrer.
+
+### Configuração de Staleness
+
+Defina os thresholds para classificação de staleness:
+
+```yaml
+staleness:
+  fresh_threshold: 0.3 # score abaixo: Fresh
+  aging_threshold: 0.5 # score entre 0.3-0.5: Aging
+  stale_threshold: 0.7 # score entre 0.5-0.7: Stale
+  critical_threshold: 0.85 # score acima: Critical (CI falha)
+
+  # Layers isentas de CI gate (raramente necessário)
+  ci_exempt_layers: []
+```
+
+Por padrão, `maes validate` falha apenas se alguma layer atingir o threshold crítico (score > 0.85). Para projetos com contexto que muda com menos frequência, aumente o threshold crítico. Para projetos críticos onde o contexto deve estar sempre atualizado, reduza.
+
+### Configuração de Análise
+
+Controle o comportamento do agente externo `/maes-analyze` quando ele ler o repositório (os ignores também são respeitados por `maes sync` em operações de leitura):
+
+```yaml
+analyze:
+  # Diretórios a ignorar durante a análise
+  ignore:
+    - "node_modules/**"
+    - ".next/**"
+    - "dist/**"
+    - "coverage/**"
+
+  # Extensões de arquivo a analisar
+  extensions:
+    - ".ts"
+    - ".tsx"
+    - ".py"
+    - ".go"
+
+  # Profundidade máxima de análise (para codebases muito grandes)
+  max_files: 500
+```
+
+Para codebases com mais de 500 arquivos relevantes, aumente `max_files` ou refine os `ignore` patterns para focar a análise nas partes mais críticas do código. A qualidade do `inferred/` depende da qualidade da amostra analisada pelo agente `/maes-analyze`.

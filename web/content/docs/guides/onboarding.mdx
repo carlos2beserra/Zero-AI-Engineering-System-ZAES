@@ -1,0 +1,151 @@
+---
+title: "Onboarding — Trabalhando em um Projeto com MAES"
+description: "Guia para desenvolvedores que entram em um projeto que já usa MAES — o que existe, como ler, e como contribuir com contexto."
+---
+
+## Este Guia é Para Você Se
+
+Você acabou de entrar em um projeto que já tem um diretório `.maes/` no repositório. Você não precisa instalar ou configurar o MAES do zero — alguém já fez isso. O que você precisa é entender o que está lá e como trabalhar com isso.
+
+## Passo 1 — Entender o que é .maes/ no Projeto
+
+O diretório `.maes/` contém o contexto compilado que os assistentes de IA (Claude Code, Cursor, Copilot, Windsurf) usam para entender o projeto. Ele tem duas partes principais:
+
+**`context/human/`** — arquivos escritos e curados pelo time. Esses são a fonte da verdade organizacional:
+
+- `compliance.md` — obrigações legais, restrições de privacidade, controles de segurança
+- `integrations.md` — contratos com APIs e sistemas externos
+- `decisions.md` — decisões arquiteturais (DEC-NNN) e alternativas rejeitadas
+- `business-rules.md` — regras de negócio, fluxos de estado, invariantes de domínio
+- `principles.md` — padrões de engenharia do time
+
+**`context/inferred/`** — arquivos populados pelo agente externo `/maes-analyze` (instalado por `maes init` no seu cliente de IA). Nunca edite esses arquivos — eles são sobrescritos na próxima análise.
+
+**`synthesis/`** — output compilado pelo pipeline. Esses arquivos são gerados por `maes sync` e são o que os assistentes de IA efetivamente consomem.
+
+## Passo 2 — Ler os Arquivos de Contexto
+
+Antes de fazer qualquer contribuição significativa ao projeto, leia os arquivos de `context/human/`. Eles respondem perguntas que o código não responde:
+
+**`compliance.md`** — quais são as restrições não-negociáveis? O que não pode ser logado? Quais dados têm restrições de residência? O que a lei exige do sistema?
+
+**`decisions.md`** — por que o projeto foi construído assim? Por que PostgreSQL e não MongoDB? Por que UUID e não ID sequencial? As alternativas rejeitadas são tão importantes quanto as escolhas — elas te dizem o que o time já avaliou e descartou.
+
+**`business-rules.md`** — o que não pode ser mudado do ponto de vista do negócio? Quais transições de estado são irreversíveis? Quais cálculos têm regras específicas? Esses são os invariantes de domínio que a IA precisa respeitar.
+
+**`principles.md`** — como o time escreve código? Quais padrões são esperados em todo PR? Quais anti-patterns são proibidos?
+
+<Callout type="info">
+  Leia os arquivos de contexto como se fossem o README do projeto — porque
+  funcionalmente é isso que são, mas para a IA.
+</Callout>
+
+## Passo 3 — Instalar MAES Localmente (Opcional)
+
+Se você quiser usar os comandos CLI do MAES, instale via pipx:
+
+```bash
+pipx install maes
+```
+
+Isso instala o CLI globalmente. Para verificar:
+
+```bash
+maes --version
+```
+
+Se não quiser instalar o MAES localmente, você ainda pode trabalhar com o projeto normalmente — veja a seção "Sem MAES Instalado" no final deste guia.
+
+## Passo 4 — Verificar o Estado do Contexto
+
+Com o MAES instalado, verifique se o contexto do projeto está saudável:
+
+```bash
+maes doctor
+```
+
+O output mostra:
+
+- Quantidade de guards ativos
+- Tamanho do hot context (deve ser ≤ 800 tokens)
+- Conflitos UNRESOLVED (devem ser zero)
+- Staleness por layer
+
+Se `maes doctor` mostrar problemas, veja a seção de troubleshooting ou consulte o time para entender se é algo esperado ou um problema a resolver.
+
+## Passo 5 — Entender o CI
+
+Todo PR passa por `maes validate` no CI. Esse comando verifica:
+
+1. Ausência de conflitos UNRESOLVED no contexto compilado
+2. Hot context dentro do limite de 800 tokens
+3. Staleness crítico (score ≥ 0.8) nas layers de compliance, security e contracts
+
+Se o CI falhar por causa do MAES, o output vai indicar exatamente o que está errado.
+
+## O que Fazer Quando o CI Falha
+
+### Falha por conflito UNRESOLVED
+
+```bash
+maes explain conflict --id CONFLICT-001
+```
+
+O output mostra quais assertions estão em conflito, de quais arquivos elas vêm, e qual decisão precisa ser tomada. Para resolver, edite os arquivos de contexto relevantes para eliminar a contradição e execute `maes sync`.
+
+### Falha por staleness
+
+```bash
+maes explain status
+```
+
+O output mostra quais assertions têm score de staleness crítico e em qual arquivo cada uma está. Revise o arquivo indicado, atualize o conteúdo se necessário (ou apenas faça um commit no arquivo para resetar o timer se o conteúdo ainda estiver correto), e execute `maes sync` seguido de `maes validate`.
+
+### Dúvidas sobre um guard específico
+
+```bash
+maes explain guard --path "src/auth/**"
+```
+
+Mostra quais assertions geraram aquele guard e de qual arquivo de contexto vieram.
+
+## Contribuindo com Contexto
+
+Contribuir com contexto é tão importante quanto contribuir com código. Quando você descobrir algo que a IA precisa saber para trabalhar bem no projeto, adicione:
+
+### Via agente externo (recomendado para regras pontuais)
+
+Invoque o slash command `/maes-context-add` no seu cliente de IA (Claude Code, Cursor, Copilot, Windsurf, Continue) passando o texto da regra — por exemplo: _"Campo customer_id em orders não tem FK no banco — validação feita em código no order-service"_. O agente classifica e adiciona no arquivo correto de `.maes/context/human/`. Depois rode:
+
+```bash
+maes sync
+maes validate
+```
+
+### Via edição direta (recomendado para decisões arquiteturais)
+
+Para registrar um DEC-NNN com contexto completo, edite `decisions.md` diretamente usando o formato de Decision Record. O agente externo `/maes-context-add` é conveniente mas a edição manual cuidadosa produz registros mais ricos para decisões arquiteturais.
+
+### Após qualquer contribuição
+
+Sempre execute `maes sync` e `maes validate` antes de commitar mudanças nos arquivos de `context/human/`. Os arquivos gerados em `synthesis/` também devem ser commitados — eles são o que o CI valida.
+
+## Sem MAES Instalado
+
+O MAES não precisa estar instalado localmente para você trabalhar no projeto. Os adapters gerados pelo pipeline — `CLAUDE.md`, `.cursor/rules/`, `.windsurfrules`, `copilot-instructions.md` — são commitados no repositório e ficam disponíveis para qualquer desenvolvedor.
+
+Isso significa que:
+
+- Claude Code lê automaticamente o `CLAUDE.md` na raiz do projeto
+- Cursor lê `.cursor/rules/` automaticamente
+- Windsurf lê `.windsurfrules` automaticamente
+- GitHub Copilot lê `copilot-instructions.md` automaticamente
+
+Você recebe o contexto compilado sem precisar do CLI. A única limitação é que você não consegue usar comandos como `maes explain`, `maes doctor` ou `maes sync` — para isso, instale o CLI.
+
+<Callout type="warning">
+  Se você editar manualmente `CLAUDE.md` ou `.cursor/rules/` diretamente, suas
+  alterações serão sobrescritas na próxima vez que alguém rodar `maes sync`.
+  Sempre adicione contexto nos arquivos de `context/human/`, não nos adapters
+  gerados.
+</Callout>

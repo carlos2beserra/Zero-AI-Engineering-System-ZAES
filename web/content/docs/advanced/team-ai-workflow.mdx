@@ -1,0 +1,178 @@
+---
+title: Boas Práticas para Times
+description: Como times que usam AI coding agents mantêm consistência, compartilham contexto e evitam que o conhecimento organizacional fique preso em chats individuais.
+---
+
+Times que adotam AI coding agents sem processo estruturado enfrentam um problema específico: o contexto é pessoal e diverge. Dev A passou uma hora explicando a arquitetura para o assistente e obteve código excelente. Dev B abriu uma nova sessão sem esse contexto e obteve código que viola a arquitetura. Ambos usam a mesma ferramenta, o mesmo modelo, o mesmo projeto.
+
+O MAES resolve a parte técnica — contexto versionado, compartilhado via git, validado em CI. Este guia cobre a parte de processo: como um time trabalha bem com AI coding agents, independente de qual ferramenta cada um usa.
+
+---
+
+## O problema de contexto em times
+
+Sem contexto estruturado, o conhecimento organizacional fica distribuído e não sincronizado:
+
+- O sênior que sabe por que `audit_logs` não pode ter soft delete
+- O tech lead que sabe por que MongoDB foi descartado
+- O dev que passou pelo incidente de produção e sabe que aquela validação é obrigatória
+
+Quando esse dev está de férias, o conhecimento está inacessível. Quando um novo dev entra, precisa descobrir por tentativa e erro. Quando a IA é usada sem esse contexto, ela toma as decisões que o time tomaria sem o sênior presente.
+
+**Contexto de chat é contexto pessoal e temporário.** Uma decisão tomada em uma sessão de Claude Code não chega automaticamente para o Cursor do dev ao lado. A única forma de contexto ser compartilhado é estar no repositório.
+
+---
+
+## Como o MAES distribui contexto
+
+Quando um dev executa `maes sync` e commita os adapters gerados, todo o time recebe o contexto atualizado via `git pull`:
+
+- Claude Code lê `CLAUDE.md` automaticamente em toda sessão
+- Cursor lê `.cursor/rules/maes-context.mdc` automaticamente
+- Windsurf lê `.windsurfrules` automaticamente
+- GitHub Copilot lê `copilot-instructions.md` automaticamente
+
+Não é necessário que cada dev instale o MAES localmente. Os adapters gerados ficam no repositório. O dev que só usa Cursor recebe o mesmo contexto que o dev que usa Claude Code.
+
+A fonte da verdade é `context/human/` — os arquivos curados pelo time. Tudo que está lá entra no contexto de toda sessão de todo dev.
+
+---
+
+## Decisões arquiteturais são contexto
+
+Este é o padrão mais importante para times: **quando você toma uma decisão arquitetural, ela vai para `decisions.md` no mesmo PR que a implementa**.
+
+Por que isso importa:
+
+- Na próxima sessão, a IA não vai propor a alternativa que você acabou de descartar
+- Devs novos que entram no projeto encontram o raciocínio, não só o resultado
+- Em code review, o revisor tem acesso ao contexto da decisão sem precisar perguntar
+- A IA em sessões de code review conhece o que foi decidido e por quê
+
+O formato `DEC-NNN` não é burocracia. É a diferença entre um time que debate a mesma questão a cada seis meses e um time que tem memória organizacional.
+
+```bash
+# Ao implementar uma mudança arquitetural
+# Use o agente externo /maes-context-add no seu cliente de IA, ou edite
+# diretamente .maes/context/human/decisions.md com o registro completo:
+#   "DEC-007: Migramos para gRPC no serviço de inventário — REST tinha
+#    overhead de serialização inaceitável para volume de 10k req/s. REST
+#    mantido apenas para APIs públicas."
+
+maes sync
+
+# Commitar junto com a implementação
+git add .maes/context/human/decisions.md .maes/synthesis/ CLAUDE.md
+git commit -m "feat(inventory): migra para gRPC + registra DEC-007"
+```
+
+---
+
+## Code review com AI no loop
+
+Quando o código gerado por IA entra em review, o revisor precisa avaliar duas camadas:
+
+**1. O código em si** — lógica, segurança, edge cases, performance. Igual a qualquer code review.
+
+**2. A conformidade com o contexto organizacional** — o código gerado respeita as regras de domínio, compliance e arquitetura documentadas?
+
+Com MAES ativo, a IA que o revisor usa durante o review também tem acesso ao contexto organizacional. O revisor pode perguntar:
+
+```
+/maes-review
+```
+
+O `/maes-review` revisa o diff da branch atual contra o contexto compilado do MAES — assertions, guards e ownership — e emite um **MAES Review Scorecard**, com atenção especial a conformidade com as regras de compliance e os contratos de integração. As preocupações de segurança e de migração entram como heurísticas dessa revisão. Ele tem acesso às mesmas regras que deveriam ter guiado a geração original — e aponta divergências. É **consultivo**: sinaliza riscos, mas nunca bloqueia nem aprova — a decisão final é sempre do revisor.
+
+**O que o revisor deve verificar manualmente, independente da IA:**
+
+- Dados sensíveis não estão em logs (CP, cartão, token)
+- Campos de integração não foram alterados sem atualizar `integrations.md`
+- Migrações de banco são reversíveis ou têm estratégia de rollback
+- Novas dependências foram avaliadas (segurança, licença, manutenção)
+
+---
+
+## Onboarding de novos devs
+
+Um dev que entra em um projeto com MAES configurado recebe, via `git clone`:
+
+- As regras de compliance e segurança do projeto
+- As decisões arquiteturais e as alternativas que foram descartadas
+- Os contratos com sistemas externos que não podem ser violados
+- As invariantes de domínio que o código precisa respeitar
+- Os padrões de engenharia do time
+
+Sem MAES, esse conhecimento é passado via par de onboarding, conversas de Slack e tentativa e erro em PRs. Com MAES, ele está disponível para a IA que o novo dev vai usar desde o primeiro dia.
+
+Isso não elimina o onboarding humano. Elimina o retrabalho de aprender a mesma coisa em ordem inversa (implementar → receber review negativo → descobrir a regra).
+
+---
+
+## Propriedade do contexto
+
+Contexto sem dono não é mantido. O arquivo `.maes/OWNERSHIP.yaml` define quem é responsável por cada layer:
+
+```yaml
+ownership:
+  compliance:
+    owner: "@eng-security"
+    backup: "@tech-lead"
+    review_required: true
+  integrations:
+    owner: "@backend-lead"
+    backup: "@tech-lead"
+  decisions:
+    owner: "@tech-lead"
+    backup: "@senior-dev"
+  business-rules:
+    owner: "@product-eng"
+    backup: "@tech-lead"
+  principles:
+    owner: "@tech-lead"
+    backup: null
+```
+
+Com ownership definido, quando o CI detecta staleness crítico em `compliance.md`, sabe quem notificar. A responsabilidade não é "o time" — é `@eng-security`.
+
+---
+
+## CI como safety net, não como única validação
+
+O CI gate do MAES (`maes validate`) detecta:
+
+- Contexto desatualizado nas layers críticas (compliance, security, contracts)
+- Conflitos UNRESOLVED entre assertions
+- Hot context acima do budget de 800 tokens
+
+O que o CI **não detecta**:
+
+- Se o código gerado realmente segue as regras do contexto
+- Se as regras no contexto ainda refletem a realidade do negócio
+- Se a decisão que está em `decisions.md` ainda é válida
+
+O CI é o floor mínimo. O processo de time — code review, propriedade de contexto, atualização após mudanças arquiteturais — é o que mantém a qualidade real.
+
+---
+
+## Indicadores de um time usando AI bem
+
+O time está usando AI coding agents bem quando:
+
+- Devs não precisam reexplicar o projeto a cada sessão — o contexto está no repositório
+- Decisões novas aparecem em `decisions.md` no mesmo PR que as implementam
+- `maes validate` passa na grande maioria dos PRs sem intervenção manual
+- Code review inclui verificação de conformidade com contexto organizacional, não só lógica
+- Novos devs conseguem usar a IA produtivamente desde os primeiros dias
+
+O time não está usando bem quando:
+
+- Cada dev mantém seu próprio "super prompt" com as regras do projeto
+- `CLAUDE.md` é editado diretamente por devs individuais (sobrescrito no próximo sync)
+- `context/human/` tem placeholders depois de semanas
+- Decisões arquiteturais existem apenas em threads de Slack ou reuniões não documentadas
+- O CI falha por staleness toda semana porque o contexto não acompanha o produto
+
+---
+
+Para configurar o MAES no repositório do time, veja [Guia de Adoção para Times](/docs/getting-started/adoption-guide). Para configurar o CI gate, veja [Configuração de CI](/docs/guides/ci-setup).

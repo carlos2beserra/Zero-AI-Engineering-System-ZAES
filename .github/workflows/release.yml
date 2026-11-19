@@ -1,0 +1,147 @@
+name: Release
+
+# Publishes the MAES Python package to the private AWS CodeArtifact repository
+# (PyPI format). Triggered only by version tags. The pipeline is split into three
+# gated jobs — build -> validate -> publish — so nothing is ever published before
+# the built wheel has been installed in a clean environment and smoke-tested.
+#
+# Configuration lives in GitHub *Variables* (not Secrets — none of these are
+# sensitive; auth is short-lived via OIDC):
+#   AWS_ROLE_TO_ASSUME       IAM role ARN that GitHub OIDC assumes
+#   AWS_REGION               e.g. us-east-1
+#   CODEARTIFACT_DOMAIN      CodeArtifact domain name
+#   CODEARTIFACT_OWNER       CodeArtifact domain owner (AWS account id)
+#   CODEARTIFACT_REPOSITORY  CodeArtifact repository name (PyPI format)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Reproducible build: pin the toolchain Python.
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  build:
+    name: build (guard + wheel/sdist)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: template/scripts/tools
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Version guard (git tag == package version == pyproject)
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(python -c 'import maes; print(maes.__version__)')"
+          echo "git tag=$TAG   package=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::git tag v$TAG does not match maes.__version__ ($PKG)"
+            exit 1
+          fi
+
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Validate metadata (twine check)
+        run: twine check dist/*
+
+      - name: Generate SHA-256 checksums
+        run: sha256sum dist/* | tee dist/SHA256SUMS.txt
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maes-dist
+          path: template/scripts/tools/dist/
+          if-no-files-found: error
+
+  validate:
+    name: validate (clean install + smoke)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: maes-dist
+          path: dist
+
+      - name: Install the wheel in a clean virtualenv (isolated)
+        run: |
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/smoke/bin/python" -m pip install dist/*.whl
+
+      - name: Smoke test the installed artifact
+        run: |
+          BIN="$RUNNER_TEMP/smoke/bin"
+          which "$BIN/maes"
+          "$BIN/maes" --version
+          "$BIN/maes" --help
+          "$BIN/maes" blueprint list
+          "$BIN/maes" init --help
+          cd "$RUNNER_TEMP" && "$BIN/python" -c "import maes; print('installed at:', maes.__file__)"
+
+  publish:
+    name: publish (CodeArtifact via OIDC)
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for AWS OIDC
+    steps:
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install twine
+        run: pip install twine
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: maes-dist
+          path: dist
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Authenticate twine to CodeArtifact
+        run: |
+          aws codeartifact login --tool twine \
+            --domain "${{ vars.CODEARTIFACT_DOMAIN }}" \
+            --domain-owner "${{ vars.CODEARTIFACT_OWNER }}" \
+            --repository "${{ vars.CODEARTIFACT_REPOSITORY }}" \
+            --region "${{ vars.AWS_REGION }}"
+
+      - name: Publish to CodeArtifact
+        run: twine upload --repository codeartifact dist/*.whl dist/*.tar.gz

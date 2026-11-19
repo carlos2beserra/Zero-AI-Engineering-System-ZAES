@@ -1,0 +1,151 @@
+---
+title: Roadmap
+description: O que está sólido hoje, o que ainda falta medir, e o que vem a seguir — medir, firmar, adotar.
+---
+
+## Estado atual
+
+O MAES está organizado em três camadas, do dado bruto à decisão:
+
+- **Camada 1 — Context Compilation.** Pipeline **determinístico** de 7 estágios: INGEST → NORMALIZE → DEDUPLICATE → LAYER → CONFLICT → COMPILE → ADAPTERS ([compiler layer](/docs/architecture/compiler-layer)). É o núcleo: transforma human + inferred context em assertions canônicas.
+- **Camada 2 — MCP Runtime.** MCP Server com 4 ferramentas para entregar contexto compilado por tarefa, em runtime ([mcp](/docs/mcp/mcp-and-maes)). É como o contexto chega ao agente, fresco e escopado.
+- **Camada 3 — Governance.** Agregação determinística sobre o contexto compilado: detecção e bloqueio de conflitos no CI (`maes validate`), staleness com ownership por layer ([governance layer](/docs/architecture/governance-layer)), e o review advisory **`maes-review`** (`diff → assertions → guards → ownership → scorecard`).
+
+Apoiando as três camadas:
+
+- Adapters gerados para Claude Code, Cursor, Windsurf, Continue e GitHub Copilot com um comando.
+- Onboarding em poucos comandos (`maes init` + `/maes-analyze` + `maes sync`).
+
+A integridade do que entra na compilação é garantida por design:
+
+- **`explicit` = somente conteúdo confirmado por humano.** Sugestões inferidas marcadas com `[INFERRED]` / `[ASSUMED]` / `confirme ou remova` são descartadas da compilação (e avisadas no stderr) — nunca entram como regra de máxima confiança. Os bullets permanecem no seed humano para revisão; só não vazam para os artefatos.
+- **`anti-hallucination.json` limpo** — sem placeholders, sem hipóteses promovidas a regra.
+- **Trust signaling** em `architecture_map.json`, `impact-graph.json` e na resposta do MCP `maes_who_depends_on`: bloco `reliability` com `authoritative:false`, `trust_level:"experimental"`, `agent_safe:false` + detector automático de hub artificial (sinaliza o nó que concentra ≥30% das arestas).
+
+A camada de agentes é deliberadamente enxuta: um único workflow advisory, `maes-review`, em vez de personas especialistas por domínio. O conhecimento de domínio vive no contexto compilado (Camada 1) e é entregue via MCP (Camada 2) — não em personas. `maes-review` é estritamente determinístico no que carrega: assertions de **layers 1-2** (globais), **layers 3-5 sem path** e **layers 6-7 por overlap de path** — sem traversal de arquitetura, sem impact graph, sem module mapping. É advisory: emite scorecard, nunca aprova nem bloqueia.
+
+O diferencial real não está no compilador — qualquer eng sênior replica em 2 semanas. Está na **governança com CI enforcement**, na **proveniência auditável** e em um review **determinístico** ancorado nesse contexto: dois times escrevem assertions contraditórias → CI falha até resolverem; conteúdo inferido nunca se disfarça de regra confirmada; o review cita evidência `file:line` em vez de opinar. Isso não existe em CLAUDE.md mantido manualmente.
+
+### Validação
+
+Evidências objetivas de maturidade — não promessas:
+
+- **Validado em 4 projetos reais** (2 backends, 2 frontends), com auditoria arquitetural independente.
+- **Suíte automatizada** cobrindo compilação, governança, MCP e geração de artefatos.
+- **Proveniência validada em produção**: zero vazamento de placeholder/`[INFERRED]` nas assertions compiladas dos 4 projetos, com curadoria humana preservada no seed.
+- **Conjunto de agentes validado end-to-end**: os 4 projetos rodam o conjunto de agentes (`maes-review`, `maes-analyze`, `maes-context-add`, `maes-eval`) com zero arquivos órfãos.
+- **Trust signaling validado**: o detector de hub sinalizou automaticamente os hubs artificiais reais de cada projeto.
+
+## Limitações conhecidas
+
+O que continua incompleto hoje. Nenhuma é risco oculto — as estruturais estão explicitamente sinalizadas para os agentes.
+
+**Sem telemetria (maior bloqueio à evolução).** O diretório `.maes/telemetry/` existe, mas nada é escrito. O sistema compila, injeta e organiza — mas não registra se as rules são entregues, citadas ou seguidas. Sem isso não há como medir impacto nem fechar o loop entre "a rule existe" e "a rule foi respeitada" — e qualquer evolução posterior (dedup semântica, calibração de confiança, feedback loop) seria opinião em vez de medição.
+
+**A maioria das assertions não tem path.** Nos projetos piloto, ~79% das assertions não carregam `paths` — são regras globais de compliance/contrato/domínio. Por isso o `maes-review` carrega regras por **layer** (1-2 globais, 3-5 sem path, 6-7 por overlap), nunca por path overlap apenas; um review puramente baseado em path ignoraria as regras de negócio. É uma decisão de design já em produção; a limitação correlata é que a relevância fina por arquivo só existe para as assertions de layer 6-7.
+
+**Cobertura relativa ao snapshot, não ao código real.** `modeled_coverage_pct` é honesto em relação ao snapshot do Stage 1, mas esse snapshot é truncado por um budget cap (200k chars) e representa ~10%–35% do código. Um leitor desavisado superestima a cobertura real.
+
+**Grafo de dependências fabricado (sinalizado, isolado).** A resolução de imports relativos (`../domain`, `./interfaces`) colapsa em nós de mesmo nome em vez do irmão correto, e imports por alias (`@/`) são descartados. Em projetos reais, **30%–77% das arestas** são fabricadas, criando hubs artificiais. Hoje isso é marcado `agent_safe:false` em todos os consumidores e, na arquitetura atual, **nada no caminho de valor consome o grafo** — `maes-review` não faz traversal. É uma feature dormente e sinalizada, não um defeito no fluxo principal.
+
+**Validação de input parcial.** `confidence` inválido é normalizado e avisado; porém `layer` (1–7) e `ttl` (`90d`/`1y`) ainda caem em fallback silencioso.
+
+**Deduplicação léxica, não semântica.** O deduplicador usa Jaccard (threshold 0.85) sobre palavras. Duas assertions com vocabulário diferente mas significado equivalente não são reconhecidas como duplicatas.
+
+**Cold-start do canal humano.** Como inferências não-confirmadas são descartadas (corretamente), um projeto recém-onboarded compila com **hot context vazio** de regras L1-2 até alguém curar o canal humano. A garantia de proveniência transferiu o trabalho para a curadoria — que hoje nada solicita ou mede.
+
+## Riscos para o piloto
+
+Leitura executiva: o que pode comprometer um piloto e onde é endereçado.
+
+| Risco | Severidade | Mitigação atual | Endereçado em |
+| --- | --- | --- | --- |
+| Ausência de telemetria (sem evidência de uso/impacto) | Alta | — | V1.2 |
+| Cobertura percebida > cobertura real | Média | `scope`/`note` documentam o budget cap | V1.2 |
+| Cold-start do canal humano (hot context vazio) | Média | proveniência limpa; curadoria manual | V1.4 + curadoria |
+| Precisão do grafo (impact analysis enganosa) | Baixa | `agent_safe:false`; `maes-review` não usa o grafo | V1.4 (não bloqueante) |
+
+## V1.2 — Medir e firmar a governança
+
+Maior ROI de piloto: instrumentar a entrega de contexto e firmar a camada de governança que já existe. Telemetria encabeça porque destrava a medição de todo o resto e é independente das demais frentes.
+
+**Fundação de telemetria (pré-requisito).** Quando o MCP entrega assertions (`maes_get_agent_context`), registrar o que foi entregue em `.maes/telemetry/citations.jsonl`. É a base mínima para responder "quais rules são entregues" — sem isso, nenhuma decisão posterior é mensurável.
+
+**Cobertura honesta.** Reportar `files_on_disk` ao lado de `files_in_snapshot` e tornar o budget cap explícito, para o % nunca ser lido como cobertura do código inteiro. É honestidade de reporte do snapshot — independente do grafo.
+
+**Concluir a validação de input.** Estender a validação (que já existe para `confidence`) a `layer` (1–7) e `ttl` (formato), com mensagens legíveis em `maes validate` / `maes doctor`:
+
+```
+[WARN] compliance.md — campo 'layer' inválido: '99' (use 1–7)
+[WARN] integrations.md — 'ttl' inválido: 'soon' (use formato 90d / 1y)
+```
+
+**Ciclo de revisão (revalidação).** Calcular `review_due_at` a partir de `last_verified` + `revalidate_every` do `OWNERSHIP.yaml` e alertar (sem bloquear) quando a revisão de L1-3 vencer. Extensão natural do staleness já existente — listar pendências e marcar como revisado.
+
+## V1.3 — Observabilidade e feedback
+
+Depende da telemetria estabelecida em V1.2 — é a camada que transforma logs em medição acionável.
+
+**Cobertura de citação.** Novo `maes explain coverage` agrega os dados de telemetria: regras citadas ≥1x vs nunca citadas (candidatas a reformular/remover).
+
+**Deduplicação e detecção de conflito semânticas.** Adicionar `difflib.SequenceMatcher` como segundo critério, reduzir o threshold Jaccard para capturar mais candidatos e desambiguar conflitos que hoje disparam por polaridade léxica. Com telemetria, o impacto passa a ser mensurável (stdlib, sem dependência nova).
+
+**Harness de benchmark.** Um harness alinhado ao compilador (`build`/`emit`/`Assertion`) que meça recall/precision de conflito e dedup, acurácia de classificação de layer e latência por estágio. É pré-requisito para medir objetivamente a evolução da dedup/conflito semânticos e calibrar confiança — caso contrário, "melhorou" vira opinião.
+
+**Feedback loop.** Detectar quando um PR merged viola uma assertion ativa (diff vs. assertions), registrar o evento e fechar o loop entre "a rule existe" e "a rule é respeitada".
+
+**Confidence calibration.** Validar, com os dados de telemetria, se `inferred-high` de fato correlaciona com correção — e recalibrar o que não correlaciona. Sem telemetria, seria opinião.
+
+## V1.4 — Adoção organizacional e grafo (direção)
+
+Direção estratégica, não escopo fechado. Só faz sentido quando o sistema já é confiável e observável.
+
+**Interface de review para não-devs.** Markdown funciona para engenheiros, não para compliance/produto/jurídico — donos reais das assertions L1-2. Uma interface mínima para revisar, aprovar e comentar sem editar arquivos.
+
+**Compliance templates pré-configurados.** LGPD / PCI-DSS / SOC2 (L1-2) prontos no `maes init`. Além do valor regulatório, atacam diretamente o cold-start do canal humano — o projeto nasce com regras L1-2 confirmadas em vez de hot context vazio.
+
+**Graph Accuracy (reposicionado, determinístico).** Concreto e testável, mas deliberadamente no fim da fila: na arquitetura `Context → MCP → Governance`, nenhum consumidor do caminho de valor usa o grafo, então corrigi-lo não destrava a proposta de valor — apenas re-habilita uma consulta de impacto isolada (`maes_who_depends_on`). Quando priorizado: resolver imports relativos contra o diretório do importador (mapeando ao nó dono pelo prefixo mais longo) e ler `paths` de `tsconfig.json`/`jsconfig.json` para resolver aliases. É **resolução de caminho determinística**, nunca inferência semântica. Resultado: `agent_safe:true` por aresta resolvida com evidência.
+
+## O que não será construído
+
+Decisões intencionais, não adiamentos:
+
+**Governance Engine complexo / framework de governança.** Governance no MAES é agregação determinística sobre contexto compilado (assertions, guards, ownership) + telemetria — não um subsistema com estado, políticas e motor próprio. A complexidade mora no compilador determinístico, não numa camada de governança "inteligente".
+
+**Approval / blocking engine.** `maes-review` é advisory por design. Decisão de gate é stochástica se vier de LLM e frágil se vier de heurística sem telemetria — não bloqueamos merge com base nisso. O CI já bloqueia o que é determinístico (conflitos, staleness L1-3).
+
+**Multi-agent orchestration e delegação entre agentes.** O valor do MAES está no contexto governado, não em agentes conversando entre si. Orquestração introduziria complexidade sem proposta de valor correspondente.
+
+**Agentes-persona especialistas (de domínio).** Personas de domínio (backend, frontend, security, migration, metrics, code-reviewer) re-empacotariam contexto já entregue por CLAUDE.md + MCP — sem acrescentar conhecimento. Por isso a plataforma não as inclui.
+
+**Review / blast-radius / architecture reasoning via LLM.** `maes-review` é `diff → assertions → guards → ownership → scorecard` e nada além. Qualquer raciocínio de arquitetura, análise de impacto ou blast-radius inferido por LLM no fluxo de review reintroduz não-determinismo e custo sem garantia.
+
+**Grafo "inteligente" via LLM no compile.** A correção de precisão do grafo (V1.4) é **resolução determinística de caminho**, nunca inferência semântica durante a compilação. O compilador permanece previsível.
+
+**MCP server stateful.** Session memory antes de telemetria seria depurar um sistema O(n²) sem métricas. O valor do MCP atual está na simplicidade: lê síntese compilada, retorna contexto.
+
+**Skills engine dentro do MAES.** Skills são reutilizáveis entre organizações; o MAES é org-specific por design. O que faz sentido é um protocolo de referência (`requires_skill: "rest-api-design@v1.2"`), não um engine.
+
+**Plugin de IDE próprio.** Já entregamos via CLAUDE.md + MCP. O custo de manutenção de um plugin não justifica eliminar uma fricção que já não existe.
+
+**Suporte a múltiplos formatos de input.** Markdown + JSON hoje. Cada formato novo (YAML, TOML, Notion, Confluence) é um vetor de parsing bug com benefício marginal.
+
+<Callout type="info">
+  O compilador deve permanecer determinístico e estúpido. Qualquer tentativa de
+  torná-lo "inteligente" durante a compilação — incluindo a correção do grafo,
+  que é resolução de caminho, não inferência — comprometeria a propriedade mais
+  valiosa do sistema: previsibilidade. A inteligência vive no agente externo
+  `/maes-analyze`, fora do CLI.
+</Callout>
+
+## Por que esta ordem
+
+A sequência segue a cadeia de dependência **medir → firmar → adotar**:
+
+**V1.2 (medir) primeiro porque sem telemetria toda decisão posterior é opinião.** A telemetria instrumenta a camada que já é confiável — a entrega de assertions — e é independente de qualquer outra frente, então pode liderar sem esperar nada. Ela transforma "achamos que o contexto ajuda" em medição, e é pré-requisito de dedup semântica, feedback loop e calibração. As demais frentes de V1.2 (cobertura honesta, validação de input, ciclo de revisão) firmam a governança que já existe, com custo baixo.
+
+**V1.3 (observar) depois porque a observabilidade pressupõe a telemetria de V1.2.** Cobertura de citação, dedup semântica, feedback loop e calibração de confiança só se tornam mensuráveis quando há registro de uso — antes disso, seriam heurística cega.
+
+**V1.4 (adotar) por último porque interface para não-devs e compliance templates só fazem sentido quando o conhecimento já é confiável e observável** — e os templates ainda resolvem o cold-start que o próprio hardening criou. O **Graph Accuracy foi reposicionado para esta fase**, e não para V1.2, por uma razão arquitetural: na arquitetura `Context → MCP → Governance`, o review não usa o grafo. Como o grafo está fora do caminho de valor, sua precisão não é bloqueante; corrigi-lo re-habilita apenas uma consulta de impacto isolada — alto custo de engenharia, ROI baixo perto de telemetria e governança. Continua `agent_safe:false` e honestamente sinalizado até lá.
+
+O moat real do MAES não está no código — está no conhecimento organizacional acumulado, agora com proveniência auditável. Uma organização que usa o sistema por 12 meses tem um knowledge base estruturado, rastreável e confiável. Estas releases constroem as fundações para que esse acúmulo seja, primeiro, medível; depois, observável; e por fim, acessível a quem não edita arquivos.

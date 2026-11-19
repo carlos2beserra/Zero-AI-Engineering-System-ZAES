@@ -1,0 +1,43 @@
+name: MAES Validate Context
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+      - ".maes/vendor/**"
+  pull_request:
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+      - ".maes/vendor/**"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Compilar e validar contexto MAES
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências mínimas
+        run: pip install pyyaml
+
+      # maes sync roda o compiler pipeline completo sem precisar de ANTHROPIC_API_KEY.
+      # Lê .maes/context/human/ + .maes/context/inferred/ e escreve .maes/synthesis/.
+      - name: Compilar contexto (maes sync)
+        run: PYTHONPATH=.maes/vendor python -m maes sync
+
+      # maes validate lê .maes/synthesis/ e sai com código 1 se houver:
+      # - conflitos UNRESOLVED em qualquer layer
+      # - assertions critically stale (staleness >= 0.8) em layers 1-3
+      - name: Validar contexto (CI gate)
+        run: PYTHONPATH=.maes/vendor python -m maes validate

@@ -1,0 +1,68 @@
+---
+title: /maes-context-add
+description: Propõe e aplica edições em .maes/context/human/* com base em diff de código ou diagnóstico do /maes-analyze.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+`/maes-context-add` é o agente que **mantém a Context Layer viva**. Recebe
+um diff de PR ou um relatório do `/maes-analyze` e propõe edições concretas
+em `.maes/context/human/*.md`.
+
+## Quando usar
+
+- **Pós-merge** — atualizar contexto com decisões tomadas no PR.
+- **Após /maes-analyze** — fechar gaps identificados.
+- **Mudança de stack/integração** — capturar novo provider, biblioteca,
+  contrato externo.
+
+## Como invocar
+
+| Cliente             | Comando                                     |
+| ------------------- | ------------------------------------------- |
+| Claude Desktop/Code | `/maes-context-add`                      |
+| GitHub Copilot      | `/maes-context-add`                      |
+| Cursor              | `@maes-context-add`                      |
+| Continue            | Auto-carregado — peça "atualize o contexto" |
+| Windsurf Cascade    | Auto-carregado — peça "atualize o contexto" |
+
+## Workflow
+
+1. Você fornece input: diff do PR, output do `/maes-analyze`, ou descrição
+   livre.
+2. O agent lê a Context Layer atual.
+3. Propõe **patches específicos** em arquivos `human/*.md`.
+4. Você revisa, aprova, salva.
+5. Rode `maes sync` para regenerar adapters.
+
+<Callout type="info">
+  O agent **nunca** edita `inferred/*` — esses arquivos são regenerados pelo CLI
+  determinístico. Toda edição é apenas em `human/`.
+</Callout>
+
+## Exemplo de saída
+
+````markdown
+### Patches propostos
+
+**`.maes/context/human/decisions.md`**
+
+```diff
++ - DEC-016: OAuth2 escolhido para integrações de terceiros — API key
++   rejeitada por falta de escopo granular (PR #142).
+```
+
+**`.maes/context/human/integrations.md`**
+
+```diff
++ ## OAuth provider
++ - Callback: `/auth/callback`
++ - Token: Bearer JWT, TTL 1h
+```
+````
+
+## Próximos passos
+
+- [/maes-analyze](/docs/agents/maes-analyze)
+- [Catálogo de agents](/docs/agents/catalog)
+- [Mantendo contexto fresco](/docs/guides/keeping-context-fresh)

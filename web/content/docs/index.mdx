@@ -1,0 +1,79 @@
+---
+title: Documentação MAES
+description: MAES é um Context Compiler for AI-Assisted Engineering — compila conhecimento organizacional em contexto estruturado para assistentes de IA.
+---
+
+## Por onde começar?
+
+Escolha o caminho que melhor descreve onde você está:
+
+<Cards>
+  <Card
+    title="Novo no MAES"
+    description="Entenda o problema, veja exemplos concretos e faça o setup em minutos."
+    href="/docs/foundations/why-maes-exists"
+  />
+  <Card
+    title="Já instalei, quero integrar"
+    description="Configure o MAES com Claude Code, Cursor, Copilot ou Windsurf."
+    href="/docs/integrations/overview"
+  />
+  <Card
+    title="Implantando no time"
+    description="Guia de adoção em fases: do piloto individual à governança organizacional."
+    href="/docs/getting-started/adoption-guide"
+  />
+</Cards>
+
+## Entendendo a plataforma
+
+<Cards>
+  <Card
+    title="Por que MAES existe"
+    description="O problema invisível do AI coding sem contexto humano."
+    href="/docs/foundations/why-maes-exists"
+  />
+  <Card
+    title="As 6 camadas do MAES"
+    description="Context, Compiler, Agent, Documentation, MCP, Governance."
+    href="/docs/architecture/overview"
+  />
+  <Card
+    title="MCP — entrega sob demanda"
+    description="Como agents consultam contexto sem inflar o prompt inicial."
+    href="/docs/mcp/what-is-mcp"
+  />
+  <Card
+    title="Catálogo de agents"
+    description="Slash commands /maes-analyze, /maes-context-add, /maes-eval."
+    href="/docs/agents/catalog"
+  />
+</Cards>
+
+---
+
+## Comandos Principais
+
+| Comando                | O que faz                                                                          | Precisa de API key? |
+| ---------------------- | ---------------------------------------------------------------------------------- | ------------------- |
+| `maes init`            | Cria scaffold `.maes/` e instala agentes externos                                  | Não                 |
+| `maes sync`            | Compila contexto e gera adapters de IDE                                            | Não                 |
+| `maes validate`        | CI gate — exit 1 se contexto inválido                                              | Não                 |
+| `maes audit`           | Auditoria determinística com score 0–100                                           | Não                 |
+| `maes doctor`          | Verifica instalação e configuração                                                 | Não                 |
+| `/maes-analyze`        | Agente externo que popula `context/inferred/`                                      | Não                 |
+| `/maes-context-add` | Agente externo que extrai regras de texto/arquivos e roteia para `context/human/*` | Não                 |
+| `/maes-eval`           | Agente externo: LLM-as-judge que mede ganho com vs sem contexto MAES               | Não                 |
+
+## Adapters Gerados
+
+Após `maes sync`, o contexto compilado é exportado automaticamente para todos os assistentes de IA instalados no repositório:
+
+- `CLAUDE.md` — carregado automaticamente pelo Claude Code
+- `.cursor/rules/` — carregado automaticamente pelo Cursor
+- `.windsurfrules` — carregado automaticamente pelo Windsurf
+- `.github/copilot-instructions.md` — carregado automaticamente pelo GitHub Copilot
+
+O mesmo contexto, compilado uma vez, serve a todos os assistentes sem configuração adicional por ferramenta.
+
+→ [Usando os Agents](/docs/guides/using-agents) — como invocar os agents em cada IDE

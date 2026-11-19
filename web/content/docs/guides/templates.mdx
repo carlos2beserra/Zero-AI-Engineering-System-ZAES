@@ -1,0 +1,252 @@
+---
+title: "Templates de Contexto"
+description: "Referência de estrutura para cada arquivo em .maes/context/human/ — o que vai em cada arquivo, exemplos reais e como organizar o conteúdo."
+---
+
+## Visão Geral
+
+Os arquivos em `.maes/context/human/` são a fonte da verdade organizacional do MAES. Eles são escritos e mantidos pelo time, versionados no git, e usados como entrada do pipeline do compilador a cada `maes sync`.
+
+Esta página documenta a estrutura esperada e exemplos reais para cada arquivo. Use como referência ao criar ou atualizar conteúdo.
+
+| Arquivo | Layer | Responsável | O que vai aqui |
+|---------|-------|-------------|----------------|
+| `compliance.md` | 1-2 | @security-team | Obrigações legais, controles de segurança |
+| `integrations.md` | 3 | @platform-team | Contratos com APIs e sistemas externos |
+| `decisions.md` | 4 | @tech-leads | Decisões arquiteturais (DEC-NNN) |
+| `business-rules.md` | 5 | @product-team | Invariantes de domínio, regras de negócio |
+| `principles.md` | 6 | @all-engineers | Padrões de código do time |
+
+---
+
+## compliance.md (Layer 1-2)
+
+**O que vai aqui:** Obrigações que não podem ser negociadas. Qualquer regra de compliance legal (LGPD, PCI-DSS, SOC 2, contratos com clientes que impõem restrições) e controles de segurança técnica que o time de segurança considera inegociáveis.
+
+Esse arquivo tem a maior prioridade no sistema. Assertions aqui sobrescrevem qualquer regra de engineering ou domínio que esteja em conflito.
+
+```markdown
+# Compliance e Segurança
+
+## Requisitos Legais
+
+- [LGPD] Dados pessoais de usuários (nome, e-mail, CPF, endereço) não devem ser
+  logados em nenhuma circunstância, nem em ambiente de desenvolvimento
+- [LGPD] Dados pessoais devem ser pseudonimizados em ambientes de staging e testes —
+  nunca usar dados reais de produção fora de produção
+- [Contratual] Dados de clientes do segmento financeiro não podem sair do Brasil —
+  toda persistência e processamento deve ocorrer em regiões AWS sa-east-1
+- [PCI-DSS] Dados de cartão nunca devem ser armazenados localmente — delegar
+  completamente ao Stripe, que é o processador certificado
+
+## Segurança
+
+- Tokens JWT não devem ser armazenados em localStorage — usar httpOnly cookies
+  com Secure e SameSite=Strict
+- Nunca logar headers de Authorization em produção, mesmo parcialmente
+- CORS deve ser restritivo: apenas origens explicitamente listadas em config,
+  nunca usar wildcard (*) em produção
+- Inputs de usuário devem ser validados e sanitizados antes de qualquer operação
+  de banco de dados — sem interpolação direta de strings em queries SQL
+- Senhas nunca devem ser logadas, nem em hash
+```
+
+---
+
+## integrations.md (Layer 3)
+
+**O que vai aqui:** Contratos com sistemas externos — rate limits, formatos de autenticação, campos críticos, restrições de uso. Inclui tanto APIs de terceiros (Stripe, SendGrid, etc.) quanto sistemas internos legados que têm restrições especiais.
+
+```markdown
+# Integrações Externas
+
+## ERP Legado (interno)
+
+- Endpoint: POST /api/erp/sync
+- Rate limit: 5 rps — sem retry automático (o ERP não suporta idempotência)
+- Autenticação: Basic auth com credenciais rotacionadas mensalmente (via secrets manager)
+- Campo `erp_id` é a chave de join entre o ERP e o sistema — nunca remover,
+  renomear ou alterar o tipo deste campo
+- Timeouts: 15s para respostas normais, 60s para sincronização de estoque
+- Status do contrato: ativo, renovável anualmente em março
+
+## Stripe (pagamentos)
+
+- Webhooks do Stripe devem ser processados com idempotência usando `stripe_payment_id`
+  como chave — o mesmo evento pode ser entregue mais de uma vez
+- Nunca processar pagamentos sem verificar a assinatura do webhook (Stripe-Signature)
+- O campo `payment_intent_id` deve ser persistido junto com o pedido para consultas futuras
+- Reembolsos devem ser criados via API do Stripe, nunca manipulando o banco diretamente
+
+## SendGrid (e-mail transacional)
+
+- Limite de 100 e-mails/hora por conta — não disparar campanhas de marketing via
+  a mesma conta da API transacional
+- Templates de e-mail devem ser gerenciados no painel do SendGrid (não inline no código)
+- A variável `SENDGRID_API_KEY` está disponível apenas em produção e staging
+```
+
+---
+
+## decisions.md (Layer 4)
+
+**O que vai aqui:** Decisões arquiteturais no formato DEC-NNN. Inclui o contexto que levou à decisão, o que foi decidido, as alternativas rejeitadas, e as consequências para o código gerado pela IA.
+
+Para o formato completo, veja [Decision Records (DEC-NNN)](/docs/guides/decision-records).
+
+```markdown
+# Decisões Arquiteturais
+
+### [DEC-001] PostgreSQL sobre MongoDB
+
+**Data:** 2024-01-15
+**Status:** Ativo
+
+**Contexto:**
+O sistema de pedidos precisa de um banco principal com suporte a transações ACID.
+Avaliamos PostgreSQL e MongoDB como candidatos.
+
+**Decisão:**
+PostgreSQL foi escolhido como banco de dados principal para todos os serviços.
+
+**Consequências:**
+- Transações ACID disponíveis nativamente — use transações do PostgreSQL para
+  operações que envolvem múltiplas tabelas (ex: criar pedido + itens)
+- JSONB disponível para campos sem schema fixo como `metadata`
+- A IA deve gerar queries SQL padrão, não aggregation pipelines
+
+**Alternativas rejeitadas:**
+- MongoDB — descartado porque o modelo de dados é fortemente relacional e ACID
+  é requisito não-negociável para consistência de pedidos e billing
+
+---
+
+### [DEC-002] UUID gerado pela aplicação, não pelo banco
+
+**Data:** 2024-01-20
+**Status:** Ativo
+
+**Contexto:**
+Precisamos de IDs únicos para entidades. A questão é: quem gera — aplicação ou banco?
+
+**Decisão:**
+UUIDs v4 são gerados pela aplicação antes da inserção no banco.
+
+**Consequências:**
+- O ID fica disponível antes da persistência — simplifica emissão de eventos pré-save
+- Use `crypto.randomUUID()` (Node.js built-in) — não instalar biblioteca de UUID
+
+**Alternativas rejeitadas:**
+- `gen_random_uuid()` do PostgreSQL — descartado porque o ID não estava disponível
+  antes do INSERT, complicando eventos e testes sem banco
+- ULIDs — descartados pela curva de aprendizado e ausência de necessidade de
+  ordenação temporal no volume atual
+```
+
+---
+
+## business-rules.md (Layer 5)
+
+**O que vai aqui:** Regras de negócio que definem o comportamento correto do sistema do ponto de vista do produto. Fluxos de estado de entidades, invariantes (o que nunca pode acontecer), cálculos específicos do domínio, permissões por papel de usuário.
+
+```markdown
+# Regras de Negócio
+
+## Pedidos
+
+### Ciclo de Vida
+
+Status possíveis: RASCUNHO → ENVIADO → APROVADO → SEPARANDO → ENVIADO → ENTREGUE
+
+Transições válidas:
+- RASCUNHO → ENVIADO: requer ao menos um item, endereço de entrega preenchido
+- ENVIADO → APROVADO: requer confirmação de estoque de todos os itens
+- APROVADO → SEPARANDO: automático após confirmação de expedição
+- SEPARANDO → CANCELADO: bloqueado — abrir processo de devolução separado
+- APROVADO → CANCELADO: permitido apenas dentro das 2h após aprovação
+
+Transições inválidas (nunca implementar):
+- APROVADO → RASCUNHO (irreversível)
+- ENTREGUE → qualquer status anterior (irreversível)
+
+### Regras de Cancelamento
+
+[RULE-CAN-001] Cancelamento com reembolso automático:
+- Quando: status APROVADO + criado há menos de 2h + `custom_order = false`
+- Então: reembolso = valor_pago × 0.975 (taxa de processamento de 2.5% não reembolsável)
+- Via: Stripe refund API — nunca manipular diretamente o saldo no banco
+
+[RULE-CAN-002] Cancelamento sem reembolso:
+- Quando: status APROVADO + criado há mais de 2h, ou `custom_order = true`
+- Então: nenhum reembolso — exibir mensagem de política ao cliente
+
+### Limites de Aprovação
+
+- Pedidos com valor ≤ R$50.000: aprovação automática após confirmação de estoque
+- Pedidos com valor > R$50.000: requer aprovação manual de dois membros do time financeiro
+- Pedidos de clientes com `vip = true`: sem limite — aprovação automática sempre
+
+## Clientes
+
+- CPF deve ser validado com algoritmo de dígito verificador, não apenas formato regex
+- Cliente com `status = BLOQUEADO` não pode fazer novos pedidos, mesmo com crédito disponível
+- E-mail de cliente é único no sistema — rejeitar duplicatas com mensagem clara
+
+## Produtos
+
+- `unit_price` em order_items registra o preço no momento da compra — nunca recalcular
+  com o preço atual do produto, mesmo que o produto tenha sido atualizado
+- Produto com `disponivel = false` não pode ser adicionado a novos pedidos, mas pedidos
+  existentes com esse produto continuam válidos
+```
+
+---
+
+## principles.md (Layer 6)
+
+**O que vai aqui:** Padrões de engenharia que o time adotou — convenções de código, ferramentas, estrutura de projeto, anti-patterns identificados. Diferente das layers superiores, essas regras podem evoluir com maior frequência conforme o time amadurece suas práticas.
+
+```markdown
+# Padrões de Engenharia
+
+## Git e Versionamento
+
+- Commits em inglês, formato Conventional Commits: feat(scope): description
+- Nunca commitar `.env`, arquivos de configuração com secrets ou chaves de API
+- PRs devem ter no máximo 400 linhas de diff — PRs maiores devem ser divididos em partes
+- Branch naming: feat/TASK-NNN-descricao, fix/TASK-NNN-descricao, chore/descricao
+
+## TypeScript
+
+- `any` é proibido — usar `unknown` + type guard quando o tipo não é conhecido
+- Exports nomeados são preferidos sobre default exports (facilita tree-shaking e busca)
+- Interfaces para contratos externos (DTOs, respostas de API), types para unions e composições
+- `as` type assertion é permitido apenas com comentário explicando por que é seguro
+
+## Banco de Dados
+
+- Soft delete obrigatório: usar campo `deleted_at` timestamp — nunca DELETE físico
+- Migrations devem ser reversíveis — sempre incluir operação `down` funcional
+- Nomes de tabelas em snake_case, plural: `orders`, `order_items`, `customers`
+- Índices devem ser nomeados explicitamente: `idx_orders_customer_status`
+
+## Tratamento de Erro
+
+- Erros de domínio são classes tipadas que estendem `DomainError` — nunca strings soltas
+- Erros de infraestrutura (banco, rede) são logados com stack trace completo
+- Respostas de erro para o cliente nunca expõem stack traces ou detalhes internos
+- Todo endpoint deve ter tratamento explícito de erro — sem `catch` vazio
+
+## Testes
+
+- Cobertura mínima de 80% em regras de negócio (arquivos em `domain/`)
+- Testes de integração obrigatórios para endpoints que modificam estado
+- Testes não devem depender de ordem de execução — cada teste deve ser isolado
+- Mocks de serviços externos (Stripe, SendGrid) são obrigatórios em testes unitários
+```
+
+---
+
+<Callout type="info">
+Esses templates são pontos de partida. O conteúdo real deve ser específico para o seu projeto — regras genéricas não mudam o comportamento da IA. Quanto mais concreto e verificável o conteúdo, mais efetivo ele é. Veja [As 7 Camadas de Prioridade](/docs/architecture/context-layer) para entender como o pipeline processa cada arquivo.
+</Callout>

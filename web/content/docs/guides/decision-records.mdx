@@ -1,0 +1,128 @@
+---
+title: "Decision Records (DEC-NNN)"
+description: "Como registrar decisões arquiteturais no MAES para que a IA não sugira o que o time já avaliou e descartou."
+---
+
+## O que é um Decision Record no MAES
+
+Um Decision Record é um registro permanente de uma decisão arquitetural ou técnica importante, escrito no arquivo `.maes/context/human/decisions.md` usando o formato `DEC-NNN`. Ele documenta não apenas o que foi decidido, mas por que foi decidido — e, especialmente, o que foi descartado e por quê.
+
+Essa última parte é crítica para o uso com IA. Sem o registro de alternativas rejeitadas, a IA não tem como saber que o time já avaliou determinada abordagem. Ela vai sugerir Redis quando o time decidiu usar PostgreSQL para sessões, ou vai propor IDs sequenciais quando a decisão foi usar UUIDs. O DEC-NNN fecha esse loop.
+
+## Quando Registrar uma Decisão
+
+Registre uma decisão quando ela afeta como a IA deve se comportar naquele projeto. Na prática, isso inclui:
+
+- Escolha de tecnologia ou biblioteca sobre alternativas avaliadas
+- Decisão de design que não é óbvia lendo o código
+- Padrão que será aplicado de forma consistente em todo o projeto
+- Abordagem descartada que a IA poderia sugerir novamente
+- Mudança de direção técnica com raciocínio documentado
+
+Não registre:
+
+- Decisões táticas de implementação sem impacto no design geral
+- Escolhas reversíveis de baixo impacto (como nomes de variáveis)
+- Informações que já estão adequadamente cobertas por `compliance.md` ou `principles.md`
+
+Quando em dúvida: se a decisão causaria surpresa ou debate se não estivesse documentada, ela merece um DEC-NNN.
+
+## Formato de um DEC-NNN
+
+```markdown
+### [DEC-001] PostgreSQL sobre MongoDB
+
+**Data:** 2024-01-15
+**Status:** Ativo
+
+**Contexto:**
+O sistema de pedidos precisa de um banco de dados principal. Avaliamos PostgreSQL e MongoDB
+como candidatos principais, considerando o modelo de dados fortemente relacional e o requisito
+de transações ACID para cancelamentos com reembolso.
+
+**Decisão:**
+PostgreSQL foi escolhido como banco principal para todos os serviços de pedido e billing.
+
+**Consequências:**
+
+- Transações ACID disponíveis nativamente — simplifica cancelamentos e reembolsos
+- JSONB disponível para campos sem schema fixo (como `metadata` em orders)
+- A IA deve gerar queries SQL padrão, não aggregation pipelines ou queries MongoDB
+
+**Alternativas rejeitadas:**
+
+- MongoDB — descartado porque o modelo de dados é fortemente relacional (pedidos, itens,
+  clientes, transações) e a consistência transacional é requisito não-negociável
+- DynamoDB — descartado por vendor lock-in e custo operacional para o volume atual
+```
+
+**Campos obrigatórios:** Data, Status, Contexto, Decisão
+
+**Campos recomendados:** Consequências, Alternativas rejeitadas
+
+O campo "Consequências" é onde você escreve explicitamente o que a IA deve saber sobre a decisão — não apenas o que foi decidido, mas o que isso implica para o código que ela vai gerar.
+
+## Adicionando via agente externo
+
+Para adicionar uma decisão sem editar `decisions.md` manualmente, use o agente externo `/maes-context-add` (instalado por `maes init`).
+
+Invoque o slash command e passe o texto da decisão. O agente extrai os campos, classifica como decisão arquitetural e adiciona em `decisions.md`. Exemplos de input:
+
+- _"Decidimos usar PostgreSQL sobre MongoDB porque o modelo é relacional e precisamos de transações ACID"_
+- _"UUID gerado pela aplicação, não pelo banco"_
+- Aponte o agente para um RFC existente (`rfcs/rfc-001-banco-de-dados.md`) para extrair decisões a partir do documento.
+
+Alternativamente, edite `.maes/context/human/decisions.md` diretamente.
+
+Após adicionar qualquer conteúdo, execute `maes sync` para recompilar o contexto:
+
+```bash
+maes sync
+```
+
+## Status de Decisões
+
+Cada DEC-NNN tem um campo `Status` que deve ser mantido atualizado:
+
+**Ativo** — a decisão está em vigor. A IA deve respeitá-la ao gerar código.
+
+**Substituído (por DEC-NNN)** — uma nova decisão substituiu esta. Atualize o campo status mas mantenha o registro:
+
+```markdown
+**Status:** Substituído por DEC-007 em 2024-08-20
+```
+
+**Deprecado** — a decisão foi revisada e não se aplica mais, sem substituição direta:
+
+```markdown
+**Status:** Deprecado — contexto mudou após migração para cloud-native em 2025-Q1
+```
+
+Nunca delete decisões substituídas ou deprecadas. O histórico explica o raciocínio do time e evita que a IA (ou novos desenvolvedores) proponham as mesmas alternativas que já foram descartadas. Um DEC-NNN com status "Substituído" ainda é informação útil.
+
+## Quando Atualizar uma Decisão Existente
+
+Atualize um DEC-NNN quando:
+
+- A decisão foi revisada e uma abordagem diferente foi adotada → marcar como "Substituído" e criar novo DEC-NNN
+- Nova informação invalida o raciocínio original → adicionar seção "Revisão" com data e o que mudou
+- A decisão ainda está ativa mas o contexto que levou a ela mudou → atualizar o campo "Contexto" e adicionar nota
+
+Não atualize silenciosamente o campo "Decisão" sem documentar o que mudou e por quê. O histórico de revisões é parte do valor do registro.
+
+## Arquivando Decisões Antigas
+
+Quando `decisions.md` ficar muito longo (mais de 50 DEC-NNNs ativos), considere separar decisões muito antigas com status "Substituído" para um arquivo separado. Isso é feito manualmente ou via o script de governance:
+
+```bash
+python scripts/ci/governance-report.py --archive-decisions
+```
+
+O script move decisões com status "Substituído" ou "Deprecado" para `decisions-archive.md`, mantendo apenas as ativas em `decisions.md`. O arquivo de arquivo ainda é commitado no repositório para consulta histórica.
+
+<Callout type="info">
+  Decision Records ficam em Layer 4 (Architecture) no sistema de camadas do
+  MAES. Veja [As 7 Camadas de Prioridade](/docs/architecture/context-layer) para
+  entender como Layer 4 interage com as outras layers durante o pipeline de
+  compilação.
+</Callout>

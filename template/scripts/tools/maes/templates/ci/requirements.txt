@@ -1,0 +1,13 @@
+# MAES Scripts — Dependências Python
+#
+# eval-pr.py              → requer anthropic ou openai (conforme provider)
+# suggest-context-update  → requer anthropic ou openai (conforme provider)
+# collect-metrics.py      → somente stdlib (sem dependências externas)
+#
+# Instalação:
+#   pip install -r scripts/requirements.txt
+
+anthropic>=0.40.0
+openai>=1.0.0
+pyyaml>=6.0
+mcp>=1.0.0

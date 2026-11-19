@@ -1,0 +1,138 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: maes-gateway
+  labels:
+    app: maes-gateway
+data:
+  config.yaml: |
+    model_list:
+      - model_name: claude-sonnet-4-6
+        litellm_params:
+          model: anthropic/claude-sonnet-4-6
+          api_key: os.environ/ANTHROPIC_API_KEY
+      - model_name: claude-haiku-4-5-20251001
+        litellm_params:
+          model: anthropic/claude-haiku-4-5-20251001
+          api_key: os.environ/ANTHROPIC_API_KEY
+    litellm_settings:
+      drop_params: true
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maes-gateway
+  namespace: maes-gateway
+  labels:
+    app: maes-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maes-gateway
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: maes-gateway
+    spec:
+      containers:
+        - name: maes-gateway
+          image: ghcr.io/berriai/litellm:main-stable
+          args: ["--config", "/app/config.yaml", "--port", "4000"]
+          ports:
+            - name: http
+              containerPort: 4000
+          envFrom:
+            - secretRef:
+                name: maes-gateway-secrets
+          volumeMounts:
+            - name: litellm-config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          resources:
+            limits:
+              cpu: "1"
+            requests:
+              cpu: "0.3"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: 4000
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+      volumes:
+        - name: litellm-config
+          configMap:
+            name: litellm-config
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: eks.amazonaws.com/nodegroup
+                    operator: In
+                    values:
+                      - ng-maxxi-development-instance-spot
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maes-gateway
+  namespace: maes-gateway
+  labels:
+    app: maes-gateway
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 4000
+  selector:
+    app: maes-gateway
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: maes-gateway-alb
+  namespace: maes-gateway
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:905418465113:certificate/56726058-e8d7-4729-ba69-be2ec6461b9a
+    alb.ingress.kubernetes.io/healthcheck-path: /health/liveliness
+    alb.ingress.kubernetes.io/subnets: subnet-008598389772e537f,subnet-068ff40574b5e1126
+spec:
+  ingressClassName: alb
+  rules:
+    - host: maes-gateway.appsmaxxidata.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: maes-gateway
+                port:
+                  number: 80

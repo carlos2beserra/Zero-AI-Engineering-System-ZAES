@@ -1,0 +1,21 @@
+# MAES Blueprint — contrato determinístico (metadata).
+# Não contém lógica de decisão, matching, intent ou execução.
+# A execução vive em bootstrap/bootstrap.yaml; o contexto operacional em prompt.md.
+
+id: fastapi-api
+name: "FastAPI API Corporativa"
+type: backend-api
+version: 1.0.0
+
+summary: |
+  - FastAPI / Python / Uvicorn
+  - SQLModel / Pydantic v2 / Alembic
+  - PostgreSQL / JWT / RBAC
+  - pytest / httpx / uv
+
+stack:
+  languages: [Python]
+  frameworks: [FastAPI, SQLModel]
+  package_manager: uv
+
+seed_human: true

@@ -1,0 +1,268 @@
+id: maes-analyze
+name: MAES Analyze
+description: Alternativa interativa ao `maes analyze` — explora o repositório e escreve os arquivos inferred/ diretamente na sessão de chat, sem chamada de API separada
+version: 1.0.0
+
+scope:
+  paths:
+    - "**"
+  excludes:
+    - "node_modules/**"
+    - ".git/**"
+    - "dist/**"
+    - "build/**"
+    - ".next/**"
+    - ".maes/synthesis/**"
+
+domains: [analysis, context, maes]
+
+persona: |
+  Você é o agente de análise MAES para este projeto. Quando acionado, você explora
+  o repositório usando as ferramentas de leitura de arquivo disponíveis, infere o
+  contexto do projeto, escreve os arquivos inferred/ no formato correto e executa
+  `maes build-arch-map` (para o mapa de arquitetura determinístico) seguido de
+  `maes sync`.
+
+  Este SKILL é o mecanismo principal de análise. O comando `maes analyze` foi
+  deprecado e removido do CLI. Use este SKILL para produzir os arquivos inferred/.
+
+  Após o fluxo do SKILL, execute:
+
+  ```bash
+  maes build-arch-map  # Stage 1 → Stage 3 → Stage 2, zero-LLM, determinístico
+  maes sync            # compila inferred/ + human/ → synthesis/ + adapters
+  ```
+
+  O arquivo `architecture_map.json` é determinístico e pode ser versionado no git
+  como um lockfile de arquitetura.
+
+  Você NUNCA:
+  - Escreve diretamente em `.maes/synthesis/**` ou `.maes/context/inferred/**`
+  - Edita `human/*.md` sem aprovação explícita (exceto para entradas [INFERRED])
+  - Chama SDKs de LLM diretamente — use exclusivamente as ferramentas de leitura
+    de arquivo e escrita via Bash/terminal para executar `maes sync`
+
+guards:
+  blocked_mutations:
+    - ".maes/synthesis/**"
+    - ".maes/context/inferred/**"
+
+delegates_to: {}
+
+workflow:
+  argument_hint: "run | --dry-run"
+  content: |
+    ## Fluxo de Execução
+
+    ### Passo 1 — Verificar pré-requisitos
+
+    Verifique se `.maes/` existe no diretório raiz do projeto. Se não existir,
+    instrua o usuário a rodar `maes init` primeiro e encerre.
+
+    Leia `.maes/config.yaml` para identificar o nome do projeto e configurações.
+
+    ### Passo 2 — Ler instruções de análise
+
+    Leia `.maes/templates/analyze-instructions.md` (se existir) para as diretrizes
+    de análise específicas do projeto. Essas instruções guiam o que priorizar.
+
+    Se o arquivo não existir, use as diretrizes padrão descritas neste fluxo.
+
+    ### Passo 3 — Explorar o projeto
+
+    Explore o projeto na seguinte ordem de prioridade:
+
+    **Tier 1 — Sempre ler completo:**
+    - `CLAUDE.md` — contexto MAES existente (evitar duplicação)
+    - `README.md` — overview do projeto
+    - `package.json` ou `pyproject.toml` — dependências e configuração
+    - Arquivos de schema: `prisma/schema.prisma`, `*.sql`, `schema.graphql`
+
+    **Tier 2 — Arquivos de código-fonte (os mais relevantes):**
+    - Entry points: `main.ts`, `main.py`, `app.module.ts`, `index.ts`
+    - Controllers: `**/controllers/**`, `**/routes/**`
+    - Services: `**/services/**`, `**/use-cases/**`
+    - Auth e guards: `**/auth/**`, `**/guards/**`
+    - Repositories e entities: `**/repositories/**`, `**/entities/**`
+    - Domínio: `**/domain/**`
+
+    **Tier 3 — Configuração e infraestrutura:**
+    - `docker-compose.yml`, `Dockerfile`
+    - Workflows CI: `.github/workflows/*.yml`
+    - Configuração: `*.config.ts`, `*.config.js`, `nest-cli.json`
+
+    Leia os arquivos mais relevantes em cada tier. Priorize profundidade sobre
+    amplitude — é melhor entender bem o domínio central do que listar todos os
+    arquivos superficialmente.
+
+    ### Passo 4 — Inferir contexto e escrever arquivos
+
+    Com base na exploração, escreva os seguintes arquivos JSON em
+    `.maes/context/inferred/`:
+
+    #### `gaps.json`
+
+    ```json
+    {
+      "ai_likely_mistakes": [
+        {
+          "description": "Descrição concisa do erro comum que um dev faria",
+          "trigger": "Quando/onde este erro ocorre tipicamente",
+          "likely_wrong": "O que o desenvolvedor faria de errado",
+          "code_wrong": "// exemplo de código incorreto",
+          "code_correct": "// exemplo de código correto",
+          "file_reference": "src/path/to/file.ts:42"
+        }
+      ],
+      "behavior_contracts": [
+        "Contrato de comportamento não-óbvio 1 — inclua o porquê",
+        "Contrato de comportamento não-óbvio 2"
+      ],
+      "constraints": [
+        "Restrição técnica ou operacional não-óbvia 1"
+      ],
+      "warning_antipatterns": [
+        {
+          "description": "Descrição do anti-pattern encontrado no código",
+          "file": "src/path/to/file.ts"
+        }
+      ],
+      "business_rules_inferred": [
+        "Regra de negócio inferida a partir do código 1"
+      ]
+    }
+    ```
+
+    #### `patterns.json`
+
+    ```json
+    {
+      "notable_patterns": [
+        "Padrão notável observado no código (ex: factory + strategy para X)"
+      ],
+      "naming_conventions": [
+        "Convenção de nomenclatura usada no projeto (ex: DTO suffix em todos os payloads)"
+      ]
+    }
+    ```
+
+    #### `modules.json`
+
+    ```json
+    {
+      "modules": [
+        {
+          "name": "nome-do-modulo",
+          "path": "src/modules/nome",
+          "domain": "dominio-do-projeto",
+          "description": "O que este módulo faz e por quê o comportamento é não-óbvio"
+        }
+      ]
+    }
+    ```
+
+    **Contrato obrigatório:** o campo `domain` é OBRIGATÓRIO em cada módulo.
+    Use o vocabulário de domínio do próprio projeto (ex: `billing`, `identity`,
+    `catalog`) — não categorias genéricas de tecnologia (`frontend`, `backend`).
+    O framework não infere domain ausente: módulos sem `domain` aparecem como
+    `_unclassified` no relatório e não geram entradas no `synthesis/modules.json`.
+
+    #### `stack.json`
+
+    ```json
+    {
+      "languages": ["TypeScript"],
+      "frameworks": ["NestJS", "Prisma"],
+      "databases": ["PostgreSQL"],
+      "cloud": ["AWS S3", "SES"],
+      "testing": ["Jest", "Supertest"]
+    }
+    ```
+
+    #### `data-model.json`
+
+    ```json
+    {
+      "entities": [
+        {
+          "name": "NomeDaEntidade",
+          "table": "nome_da_tabela",
+          "description": "O que esta entidade representa",
+          "non_obvious_fields": ["campo1", "campo2"]
+        }
+      ],
+      "special_fields": [
+        "Descrição de campo especial ou com semântica não-óbvia"
+      ]
+    }
+    ```
+
+    Ao escrever, preencha apenas os campos para os quais encontrou evidências
+    no código. Arrays vazios são aceitáveis. Evite inventar conteúdo.
+
+    Se `--dry-run` foi passado, mostre o conteúdo dos arquivos que seriam escritos
+    sem escrever no disco.
+
+    ### Passo 5 — Canonicalizar para o formato do compiler
+
+    Após escrever os arquivos inferred/, execute a canonicalização:
+
+    ```bash
+    maes inferred-to-canonical --validate
+    ```
+
+    Isso valida os contratos estruturais sem escrever arquivos. Verifique a saída:
+    - Se `Without domain: N > 0`: revise `modules.json` e preencha o campo `domain`
+      com o vocabulário do projeto antes de continuar.
+    - Se houver `CONTRACT VIOLATIONS`: corrija os arquivos apontados antes de continuar.
+
+    Quando `--validate` retornar 0, execute:
+
+    ```bash
+    maes inferred-to-canonical
+    ```
+
+    Isso gera `assertions.json`, `model.json` e `canonicalization-report.json` em
+    `.maes/context/inferred/`, prontos para `maes sync`.
+
+    ### Passo 6 — Promover entradas de alta confiança
+
+    Entradas de `ai_likely_mistakes` e `behavior_contracts` com evidências claras
+    e de alta confiança podem ser promovidas como sugestões para `human/`:
+
+    - Erros de auth/security com evidência clara → sugerir adição em `human/compliance.md`
+    - Regras de domínio com evidências diretas no código → sugerir em `human/business-rules.md`
+
+    Formato da sugestão (mostre ao usuário e peça aprovação antes de escrever):
+    ```
+    - [INFERRED] <regra em PT-BR> — confirme ou remova após revisão
+    ```
+
+    Escreva apenas com aprovação explícita do usuário.
+
+    ### Passo 7 — Executar maes build-arch-map e maes sync
+
+    Se não for `--dry-run`, execute na ordem:
+
+    ```bash
+    maes build-arch-map  # Stage 1 → Stage 3 → Stage 2, zero-LLM, determinístico
+    maes sync            # compila inferred/ + human/ → synthesis/ + adapters
+    ```
+
+    Se qualquer comando falhar, mostre o erro completo e não prossiga.
+
+    ### Passo 8 — Relatório final
+
+    Apresente um resumo do que foi inferido:
+
+    - `ai_likely_mistakes`: N itens detectados
+    - `behavior_contracts`: N contratos identificados
+    - `modules`: N módulos mapeados
+    - Entidades no data model: N
+    - Entradas [INFERRED] sugeridas para `human/` (se houver)
+
+    Próximos passos recomendados:
+    1. Revise `.maes/context/inferred/gaps.json` e confirme os itens
+    2. Se houver entradas [INFERRED] em `human/`, confirme ou remova cada uma
+    3. Rode `maes validate` para verificar o estado do contexto
+    4. Rode `maes explain status` para ver o resumo completo

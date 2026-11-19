@@ -1,0 +1,139 @@
+---
+title: "Integração com Cursor"
+description: "Como o MAES gera o arquivo .cursor/rules/maes-context.mdc e como usar o MCP Server como alternativa dinâmica."
+---
+
+## O arquivo gerado pelo MAES
+
+O comando `maes sync` gera `.cursor/rules/maes-context.mdc` — o arquivo de project rule principal do MAES para o Cursor. O Cursor carrega automaticamente todos os arquivos `.mdc` no diretório `.cursor/rules/` como project rules, sem necessidade de configuração adicional.
+
+O arquivo usa o formato MDC (Markdown with frontmatter) que o Cursor espera:
+
+```markdown
+---
+description: Contexto compilado pelo MAES para este projeto
+alwaysApply: true
+---
+
+## Compliance e Segurança (Layer 1-2)
+
+- PII de usuários nunca deve aparecer em logs.
+- Toda ação financeira exige audit trail antes de retornar resposta.
+
+## Contratos Externos (Layer 3)
+
+[...]
+
+## Decisões Arquiteturais (Layer 4)
+
+[...]
+
+## Guards de Path
+
+Antes de modificar qualquer arquivo em `src/services/payments/**`:
+verificar com tech lead e revisar regras de compliance do Layer 1.
+
+Antes de criar migrations em `db/migrations/**`:
+testar em staging antes de aplicar em produção.
+```
+
+O frontmatter `alwaysApply: true` garante que as rules sejam incluídas em todo contexto de edição no Cursor — tanto no Chat quanto no Composer.
+
+## Diferença entre o adapter do Cursor e o CLAUDE.md
+
+O Cursor e o Claude Code têm capacidades diferentes que influenciam como o MAES formata cada adapter:
+
+**CLAUDE.md (Claude Code):** Arquivo único, lido linearmente, suporta conteúdo rico com seções longas. O Claude Code tem capacidade de contexto maior e lê o arquivo inteiro.
+
+**`.cursor/rules/maes-context.mdc` (Cursor):** Usa o sistema de rules do Cursor com frontmatter MDC. O Cursor pode aplicar glob patterns para ativar rules apenas para certos arquivos — o MAES usa isso para mapear guards a padrões de path.
+
+Quando há guards com padrões de path específicos, o MAES pode gerar múltiplos arquivos `.mdc` em `.cursor/rules/`, um por categoria:
+
+```
+.cursor/rules/
+├── maes-context.mdc          ← contexto principal (alwaysApply: true)
+├── maes-guard-payments.mdc   ← regras específicas para src/services/payments/**
+└── maes-guard-migrations.mdc ← regras específicas para db/migrations/**
+```
+
+Isso permite que o Cursor ative regras contextuais apenas quando você está editando arquivos nos paths monitorados.
+
+## Como atualizar o contexto no Cursor
+
+O fluxo é o mesmo dos outros adapters: edite a fonte de verdade e recompile.
+
+```bash
+# Editar a fonte
+nano .maes/context/human/principles.md
+
+# Recompilar e regerrar o adapter do Cursor
+maes sync
+
+# Commitar o arquivo atualizado
+git add .maes/context/human/principles.md .cursor/rules/
+git commit -m "docs(maes): atualizar padrões de engenharia"
+```
+
+<Callout type="info">
+  Commitar `.cursor/rules/maes-context.mdc` garante que todo desenvolvedor do
+  time tenha as mesmas project rules ao clonar o repositório, mesmo sem ter o
+  MAES instalado localmente.
+</Callout>
+
+## Configuração via MCP (alternativa dinâmica)
+
+O adapter de arquivo é estático — reflete o estado do contexto no momento do último `maes sync`. Para contexto dinâmico por tarefa, o MAES oferece um MCP Server como alternativa.
+
+O comando abaixo cria `.cursor/mcp.json` na raiz do projeto automaticamente:
+
+```bash
+maes serve --write-mcp-config cursor-project
+# ou, para configurar todos os targets de uma vez (Claude Code + VS Code + Cursor):
+maes serve --write-mcp-config
+```
+
+O arquivo gerado tem o formato que o Cursor espera:
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+<Callout type="info">
+  `cursor-project` gera `.cursor/mcp.json` no projeto (project-level). O target
+  `cursor` (sem `-project`) escreve em `~/.cursor/mcp.json` global — afeta todos
+  os projetos Cursor da máquina, use com cuidado.
+</Callout>
+
+Com o MCP ativo, o Cursor pode chamar as ferramentas do MAES em runtime:
+
+- `maes_get_agent_context(agent_id, task)` — retorna hot + warm context compilado para aquela tarefa específica
+- `maes_check_guard(action, path)` — verifica se uma ação em um path é `ALLOWED`, `REQUIRES_APPROVAL` ou `BLOCKED`
+- `maes_list_agents()` — lista os agentes disponíveis e suas configurações
+
+**Vantagem do MCP sobre o arquivo estático:** o contexto é selecionado dinamicamente com base na tarefa descrita. Para uma tarefa de "implementar autenticação", o MCP retorna as decisões arquiteturais e regras de segurança relevantes. Para uma tarefa de "corrigir bug de performance", retorna um conjunto diferente de assertions.
+
+**Quando usar cada um:**
+
+| Abordagem               | Quando usar                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Arquivo `.mdc` estático | Time sem o MAES instalado localmente; contexto estável que muda raramente                                                           |
+| MCP Server              | Equipes que rodam `maes serve` em desenvolvimento; contexto que muda frequentemente; necessidade de guardrails dinâmicos por tarefa |
+
+Os dois podem coexistir: o arquivo `.mdc` garante contexto básico sempre disponível, e o MCP adiciona consultas dinâmicas quando necessário.
+
+## Para ver as rules ativas no Cursor
+
+Acesse `Cursor Settings → Rules → Project Rules` para ver quais arquivos `.mdc` estão carregados e seu conteúdo atual. Isso é útil para verificar se a última execução de `maes sync` propagou corretamente as alterações.
+
+## Onde ir a seguir
+
+- Visão geral de todos os adapters — [Visão Geral das Integrações](/docs/integrations/overview)
+- Claude Code em detalhe — [Claude Code](/docs/integrations/claude-code)
+- GitHub Copilot em detalhe — [Copilot](/docs/integrations/copilot)

@@ -1,0 +1,131 @@
+---
+title: Configurando CI/CD
+description: Como configurar o CI gate do MAES para validar contexto automaticamente em todo PR que toca .maes/.
+---
+
+## O CI Gate Principal
+
+O MAES tem um único workflow de CI obrigatório: `maes-validate.yml`. Ele roda `maes sync` (recompila o contexto) seguido de `maes validate` (verifica conflitos e staleness). Se a validação falhar, o merge é bloqueado.
+
+Copie o arquivo abaixo para `.github/workflows/maes-validate.yml` no seu repositório:
+
+```yaml
+name: MAES Validate Context
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+  pull_request:
+    paths:
+      - ".maes/context/**"
+      - ".maes/config.yaml"
+      - ".maes/OWNERSHIP.yaml"
+  workflow_dispatch:
+jobs:
+  validate:
+    name: Compilar e validar contexto MAES
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependências MAES
+        run: pip install anthropic pyyaml
+      - name: Compilar contexto (maes sync)
+        run: python -m maes sync
+      - name: Validar contexto (CI gate)
+        run: python -m maes validate
+```
+
+<Callout type="info">
+  `maes sync` não precisa de API key — apenas executa o compilador local. O
+  workflow acima não precisa de nenhum secret configurado para funcionar.
+</Callout>
+
+## Por que `python -m maes` e não `maes`
+
+O workflow usa `python -m maes` porque instala as dependências via `pip install` diretamente no runner, sem criar um ambiente isolado. Em máquinas com MAES instalado via pipx, o comando `maes` funciona normalmente. No CI do GitHub Actions, `python -m maes` é mais simples e não requer configuração adicional de PATH.
+
+## O que Bloqueia o Merge
+
+O `maes validate` retorna `exit 1` (e bloqueia o merge) em dois casos:
+
+**1. Conflito UNRESOLVED entre fontes de contexto**
+
+Quando dois arquivos em `context/human/` têm regras que se contradizem e o compilador não consegue resolver automaticamente pela hierarquia de layers, o conflito é marcado como `UNRESOLVED` em `synthesis/conflicts.json`. O `maes validate` falha com:
+
+```
+FAIL — 1 conflito UNRESOLVED encontrado
+  ID: conflict-042
+  Layer 4 (decisions.md): "ORM restrito a TypeORM"
+  Layer 6 (principles.md): "Usar Prisma para novos módulos"
+  Resolução: edite um dos arquivos para eliminar a contradição
+             ou use 'maes explain conflict --id conflict-042'
+```
+
+**2. Staleness crítico em layers 1–3**
+
+Layers de Compliance (1), Security (2) e Contracts (3) têm staleness ≥ 0.8 — ou seja, o contexto não foi revisado enquanto o código relacionado mudou significativamente.
+
+```
+FAIL — staleness crítico em layer 1 (Compliance)
+  compliance.md — staleness: 0.91
+  Última edição: 94 dias atrás
+  Código relacionado modificado: 23 vezes desde então
+  Ação: revisar compliance.md e atualizar ou confirmar que ainda está correto
+```
+
+Layers 4–5 com staleness ≥ 0.8 geram `WARN` (comentário no PR, sem bloquear merge). Layer 6 e 7 geram apenas `INFO`.
+
+## Resolvendo Falhas no CI
+
+**Para conflitos UNRESOLVED:**
+
+```bash
+# Ver detalhes do conflito
+maes explain conflict --id conflict-042
+
+# Após editar o arquivo correspondente
+maes sync
+maes validate  # deve passar agora
+```
+
+**Para staleness crítico:**
+
+```bash
+# Ver quais arquivos estão desatualizados
+maes explain status
+
+# Após revisar e atualizar o arquivo
+maes sync
+maes validate
+```
+
+Se o contexto ainda está correto e não precisa de alteração de conteúdo, basta atualizar a data de revisão no próprio arquivo (adicione uma linha de comentário ou atualize um campo de data no frontmatter do `.md`) e rodar `maes sync`.
+
+## Outros Workflows Disponíveis
+
+Além do CI gate obrigatório, o MAES oferece workflows opcionais para governança e avaliação. Consulte [GitHub Actions](/docs/ci/github-actions) para a lista completa, incluindo:
+
+- `maes-eval.yml` — avalia qualidade de PRs via LLM (requer `ANTHROPIC_API_KEY` como secret)
+- `maes-governance.yml` — dashboard semanal de staleness e saúde do contexto
+- `maes-adr-detect.yml` — detecta mudanças arquiteturais e sugere registro em `decisions.md`
+
+Esses workflows são opcionais e independentes do CI gate principal. Ative os que fizerem sentido para o fluxo do seu time.
+
+## Testando Localmente Antes do Push
+
+```bash
+# Simular o que o CI vai executar
+maes sync
+maes validate
+
+# Ver status detalhado
+maes explain status
+```
+
+Se `maes validate` passa localmente, o CI passa. O compilador é determinístico — não há diferença de comportamento entre local e CI.

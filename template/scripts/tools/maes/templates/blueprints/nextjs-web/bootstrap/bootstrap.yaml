@@ -1,0 +1,41 @@
+# MAES Blueprint bootstrap — ÚNICA fonte de execução (Official First).
+# Toda chamada de ferramenta parte daqui. O agente /maes-create executa estes
+# passos via Bash; o MAES nunca reimplementa scaffolding.
+#
+# strategy: como criar num diretório que já contém .maes/ (pós `maes init`).
+#   temporary-directory → scaffoldar em subdir temp e mover, preservando
+#                         .maes/, .claude/, CLAUDE.md, .gitignore.
+#   in-place            → usar as flags in-place da própria ferramenta oficial.
+# O MAES não cria mecanismo próprio de merge — segue as capacidades da ferramenta.
+#
+# Gate de build scripts (pnpm 10+): o pnpm bloqueia postinstall de dependências
+# e ABORTA o install (exit 1) até aprovação. Isso quebraria o install interno do
+# create-next-app, o `pnpm install` fresco e o dep-check do `next build`. Por isso
+# scaffoldamos com --skip-install e declaramos `dangerouslyAllowAllBuilds: true` no
+# pnpm-workspace.yaml do projeto (decisão explícita: um scaffold greenfield já roda
+# código de ferramentas oficiais). Não enumeramos deps nativas (evita drift).
+
+strategy: temporary-directory
+
+steps:
+  - id: scaffold
+    description: "Scaffold via create-next-app (oficial): App Router + TS + Tailwind + src/ + alias @/ (sem install — feito no passo seguinte após liberar o gate de build scripts)"
+    run: "pnpm create next-app@latest <name> --ts --app --tailwind --src-dir --import-alias \"@/*\" --use-pnpm --eslint --skip-install"
+
+  - id: install
+    description: "Liberar o gate de build scripts do pnpm e instalar as deps base (senão o pnpm aborta o install)"
+    run: |
+      printf '\ndangerouslyAllowAllBuilds: true\n' >> pnpm-workspace.yaml
+      pnpm install
+
+  - id: deps
+    description: "Stack definida pela organização (cada dependência justificada arquiteturalmente)"
+    run: "pnpm add @tanstack/react-query zustand next-intl react-hook-form zod @hookform/resolvers recharts @tanstack/react-table"
+
+  - id: configure
+    description: "Inicializar shadcn/ui (CLI oficial, Radix + Tailwind) — não-interativo"
+    run: "pnpm dlx shadcn@latest init -t next -b radix -p nova -y"
+
+finalize:
+  - "maes blueprint seed nextjs-web"
+  - "maes sync"

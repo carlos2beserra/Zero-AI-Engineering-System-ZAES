@@ -1,0 +1,21 @@
+# MAES Blueprint — contrato determinístico (metadata).
+# Não contém lógica de decisão, matching, intent ou execução.
+# A execução vive em bootstrap/bootstrap.yaml; o contexto operacional em prompt.md.
+
+id: react-spa
+name: "React SPA Corporativo"
+type: frontend-spa
+version: 1.0.0
+
+summary: |
+  - React / TypeScript / Vite
+  - Tailwind / shadcn/ui
+  - React Router / TanStack Query / Zod
+  - Vitest / Docker / pnpm
+
+stack:
+  languages: [TypeScript]
+  frameworks: [React]
+  package_manager: pnpm
+
+seed_human: true

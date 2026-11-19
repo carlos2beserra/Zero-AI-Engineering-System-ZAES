@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+
+# Fumadocs generated
+.source/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Generated at build time — do not commit
+src/lib/setup/templates/index.ts
+
+.claude/settings.**.json

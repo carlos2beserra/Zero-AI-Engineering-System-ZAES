@@ -1,0 +1,54 @@
+name: MAES Metrics — Relatório Semanal
+
+on:
+  # Toda segunda-feira às 09:00 UTC
+  schedule:
+    - cron: "0 9 * * 1"
+
+  # Permite execução manual pelo GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Dias a analisar"
+        required: false
+        default: "7"
+      output_format:
+        description: "Formato de saída (markdown ou json)"
+        required: false
+        default: "markdown"
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    name: Coletar e publicar métricas
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Coletar métricas e publicar no Step Summary
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          FORMAT="${{ github.event.inputs.output_format || 'markdown' }}"
+          WEEK=$(date +"%Y-W%V")
+
+          echo "## 📊 MAES Metrics — ${WEEK}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          python scripts/ci/collect-metrics.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --days "$DAYS" \
+            --output "$FORMAT" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Relatório publicado no Step Summary da semana $WEEK"

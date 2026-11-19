@@ -1,0 +1,66 @@
+---
+title: Catálogo de Agents
+description: Visão geral dos agents externos e fixos que o MAES instala no seu cliente de IA.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+MAES separa **CLI determinístico** (sem LLM) e **agents que operam sobre o
+contexto** (com LLM). Esta página lista os agents disponíveis.
+
+## Duas classes de agents
+
+| Classe             | O que é                                                               | Instalação          |
+| ------------------ | --------------------------------------------------------------------- | ------------------- |
+| **Slash externos** | Comandos chamados explicitamente no chat (`/maes-analyze`, etc.)      | `maes init`         |
+| **Agents fixos**   | Perfis especializados em `.maes/agents/` (arquiteto, revisor, writer) | Editáveis pelo time |
+
+## Agents externos (instalados por `maes init`)
+
+| Agent                  | Propósito                                                   | Página                                       |
+| ---------------------- | ----------------------------------------------------------- | -------------------------------------------- |
+| `/maes-review`         | Revisão consultiva do diff contra o contexto — emite Scorecard (o mais usado) | [Detalhes](/docs/agents/maes-review)         |
+| `/maes-analyze`        | Diagnóstico de gaps na Context Layer                        | [Detalhes](/docs/agents/maes-analyze)        |
+| `/maes-context-add`    | Propõe e aplica edições em `human/*.md`                     | [Detalhes](/docs/agents/maes-context-add)    |
+| `/maes-eval`           | Avalia qualidade de feature/PR contra o contexto            | [Detalhes](/docs/agents/maes-eval)           |
+
+### Invocação por cliente
+
+| Cliente             | Como chamar                        |
+| ------------------- | ---------------------------------- |
+| Claude Desktop/Code | `/maes-review` (slash command)     |
+| GitHub Copilot      | `/maes-review` (slash command)     |
+| Cursor              | `@maes-review` (@ mention)         |
+| Continue            | Auto-carregado — descreva a tarefa |
+| Windsurf Cascade    | Auto-carregado — descreva a tarefa |
+
+## Agents fixos especializados
+
+Configurados em `.maes/agents/*.yaml`. Cada perfil herda automaticamente todo
+o contexto compilado e adiciona instruções específicas.
+
+<Callout type="warn">
+  Review, segurança e migração **não** são agents fixos separados — ficam a
+  cargo do [`/maes-review`](/docs/agents/maes-review), e o conhecimento de
+  domínio chega pelo contexto compilado (CLAUDE.md, MCP), não por personas. Crie
+  um agent fixo apenas para uma especialização que o contexto compilado +
+  maes-review ainda não cobrem.
+</Callout>
+
+Exemplos de especializações que ainda fazem sentido como agent fixo próprio:
+
+- **tech-writer** — gera documentação a partir do código + contexto humano.
+- **onboarding-buddy** — guia um novo dev pelo contexto do projeto.
+
+<Callout type="info">
+  Personalize os agents fixos no seu repositório — eles são parte do contexto
+  versionado.
+</Callout>
+
+## Próximos passos
+
+- [/maes-review](/docs/agents/maes-review)
+- [/maes-analyze](/docs/agents/maes-analyze)
+- [/maes-context-add](/docs/agents/maes-context-add)
+- [/maes-eval](/docs/agents/maes-eval)
+- [Agents fixos](/docs/agents/fixed-agents)

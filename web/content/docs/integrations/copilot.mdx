@@ -1,0 +1,221 @@
+---
+title: "Integração com GitHub Copilot"
+description: "Como o MAES gera context estático e ativa o MCP Server para o GitHub Copilot via VS Code."
+---
+
+## O que o MAES gera para o Copilot
+
+O `maes sync` gera quatro tipos de artefatos para o Copilot:
+
+| Arquivo                                        | Função                                                          |
+| ---------------------------------------------- | --------------------------------------------------------------- |
+| `.github/copilot-instructions.md`              | Instruções globais carregadas em todo Copilot Chat              |
+| `.github/instructions/{agent}.instructions.md` | Instruções por agente, ativadas por glob de path                |
+| `.github/skills/{agent}/SKILL.md`              | Skill com workflow faseado — gerado quando o agent tem workflow |
+| `.vscode/mcp.json`                             | MCP Server — contexto dinâmico por tarefa                       |
+
+Os três primeiros são estáticos (gerados por `maes sync`). O último é configurado uma vez com `maes serve --write-mcp-config` e provê contexto em runtime.
+
+## Instruções globais — copilot-instructions.md
+
+O Copilot Chat carrega `.github/copilot-instructions.md` automaticamente em todas as conversas do repositório, sem configuração adicional.
+
+<Callout type="info">
+  O arquivo `.github/copilot-instructions.md` é carregado apenas no Copilot Chat
+  e no Agent Mode. Ele não influencia as sugestões inline de código.
+</Callout>
+
+Exemplo de arquivo gerado:
+
+```markdown
+# meu-projeto — GitHub Copilot Instructions
+
+## Critical Rules
+
+Always follow these rules — they encode compliance and architecture constraints.
+
+- **[compliance]** PII de usuários nunca deve aparecer em logs.
+- **[security]** Credenciais nunca devem ser hardcoded ou exibidas em output.
+- **[contracts]** A API de pagamentos tem rate limit de 100 req/s — usar backoff exponencial.
+
+## Project Context
+
+### Architecture
+
+- Repository pattern para acesso ao banco — nunca Prisma diretamente em services.
+- Autenticação via JWT com refresh token rotativo (DEC-007).
+```
+
+## Instruções por agente — .github/instructions/
+
+O `maes sync` gera um arquivo `.instructions.md` para cada agente definido em `.maes/agents/`. O VS Code aplica automaticamente o arquivo correto com base no glob `applyTo` do frontmatter — quando você edita um arquivo que bate o padrão, o Copilot recebe as instruções daquele agente.
+
+```markdown
+---
+applyTo: "template/**,template/scripts/tools/maes/**"
+---
+
+# Backend Architect
+
+Especialista em APIs, domínio, lógica de negócio e serviços backend
+
+## Critical Rules (always apply)
+
+- NUNCA adicionar chamadas LLM em compiler.py — violação do contrato determinístico
+- API keys nunca devem ser logadas, hardcoded ou escritas em disco
+
+## Project Context
+
+### Architecture
+
+- MAES usa pipeline de 7 estágios: INGEST → NORMALIZE → ... → ADAPTERS
+- Conflitos na mesma layer marcam UNRESOLVED e causam exit 1 no CI
+
+## Mutation Guards
+
+**Requires approval before modifying**: `**/*.schema.ts`, `**/*.contract.ts`
+```
+
+Os arquivos ficam em `.github/instructions/` e são commitados junto com o resto dos adapters.
+
+## Skills com workflow — .github/skills/
+
+Quando um agent define um campo `workflow` no seu YAML, o `maes sync` gera um arquivo `SKILL.md` adicional em `.github/skills/{agent}/`. Diferente do `.instructions.md` (que define persona e regras de comportamento), o SKILL.md define um **workflow faseado** invocado com argumentos — por exemplo, `start` ou `finish`.
+
+O Copilot reconhece o SKILL.md e expõe o agent como uma skill invocável no chat. O frontmatter define o nome, a descrição e a dica de argumento:
+
+```markdown
+---
+name: dev-workflow
+description: "Gerencia o fluxo completo de desenvolvimento — branch, commit, push e PR passo a passo"
+argument-hint: "start | finish"
+---
+
+Você gerencia o fluxo completo de desenvolvimento neste projeto.
+...
+
+## Fase 1 — Iniciar Tarefa (`start`)
+
+...
+
+## Fase 2 — Finalizar Tarefa (`finish`)
+
+...
+```
+
+O usuário invoca a skill diretamente no Copilot Chat com:
+
+```
+@dev-workflow start
+@dev-workflow finish
+```
+
+O Copilot então executa as fases descritas no SKILL.md em sequência, pedindo confirmação a cada passo.
+
+**Como adicionar workflow a um agent:**
+
+Edite o YAML do agent em `.maes/agents/{id}.agent.yaml` e adicione:
+
+```yaml
+workflow:
+  argument_hint: "start | finish"
+  content: |
+    ## Fase 1 — Iniciar Tarefa (`start`)
+    ...
+    ## Fase 2 — Finalizar Tarefa (`finish`)
+    ...
+```
+
+Depois rode `maes sync` — o `.github/skills/{id}/SKILL.md` é gerado automaticamente.
+
+<Callout type="info">
+  Nem todo agent precisa de workflow. O SKILL.md é gerado apenas quando o campo
+  `workflow` está presente no YAML do agent. Agents sem workflow continuam
+  gerando apenas o `.instructions.md`.
+</Callout>
+
+## MCP Server — contexto dinâmico em runtime
+
+O GitHub Copilot no VS Code 1.99+ suporta Model Context Protocol via `.vscode/mcp.json`. Com o MCP ativo, o Copilot pode chamar as ferramentas do MAES em runtime — selecionando contexto dinamicamente por tarefa.
+
+### Ativar o MCP
+
+```bash
+# Configura os três targets project-level de uma vez
+maes serve --write-mcp-config
+```
+
+Isso cria `.vscode/mcp.json` com o servidor MAES registrado no formato que o VS Code espera:
+
+```json
+{
+  "servers": {
+    "maes-meu-projeto": {
+      "type": "stdio",
+      "command": "maes",
+      "args": ["--project-dir", "/path/to/projeto", "serve"]
+    }
+  }
+}
+```
+
+O VS Code inicia o servidor automaticamente quando o Copilot precisa chamar uma tool (lazy start). Não é necessário rodar `maes serve` manualmente.
+
+### Ferramentas disponíveis via MCP
+
+| Ferramenta                                           | Descrição                                               |
+| ---------------------------------------------------- | ------------------------------------------------------- |
+| `maes_list_agents`                                   | Lista os agentes com scope e domínios                   |
+| `maes_get_agent_context(agent_id, task_description)` | Retorna hot + warm context compilado para aquela tarefa |
+| `maes_check_guard(action, path)`                     | Retorna `ALLOWED`, `REQUIRES_APPROVAL` ou `BLOCKED`     |
+
+### Verificar se o MCP está funcionando
+
+Abra o Copilot Chat no modo **Agent** (dropdown no topo do chat), e pergunte:
+
+```
+Use the maes_list_agents tool and show me the available agents.
+```
+
+O Copilot pedirá confirmação para chamar a tool, iniciará o servidor e retornará a lista de agentes com scope e assertions compiladas.
+
+<Callout type="info">
+  Se o servidor não aparecer, verifique em `Ctrl+Shift+P → MCP: List Servers`.
+  Também confirme que o VS Code é 1.99+ em `Help → About`.
+</Callout>
+
+## Diferença entre adapter estático e MCP
+
+|                         | Arquivo estático                       | MCP em runtime                             |
+| ----------------------- | -------------------------------------- | ------------------------------------------ |
+| **Quando ativa**        | Sempre (carregado no início da sessão) | Na chamada da tool                         |
+| **Contexto**            | Snapshot do último `maes sync`         | Compilado dinamicamente por tarefa         |
+| **Agentes**             | Ativado por glob do arquivo editado    | Qualquer agente, qualquer momento          |
+| **Guardrails**          | Texto nas instruções                   | `maes_check_guard` retorna ALLOWED/BLOCKED |
+| **Requer `maes serve`** | Não                                    | Sim (inicia automaticamente via VS Code)   |
+
+Os dois coexistem: o estático garante contexto básico sempre disponível mesmo sem o servidor ativo; o MCP adiciona consultas dinâmicas por tarefa.
+
+## Commitar os arquivos gerados
+
+Todos os arquivos devem ser commitados para que o Copilot os carregue em todos os ambientes do time:
+
+```bash
+# Após maes sync
+git add .github/copilot-instructions.md .github/instructions/ .github/skills/
+git commit -m "chore(maes): atualizar adapters do Copilot"
+```
+
+O `.vscode/mcp.json` também pode ser commitado para que o servidor MAES fique configurado para todo o time ao clonar o repositório.
+
+<Callout type="warning">
+  O `.vscode/mcp.json` contém o caminho absoluto para o executável `maes` na
+  máquina onde foi gerado. Para uso em equipe, prefira que cada dev rode `maes
+  serve --write-mcp-config` localmente após clonar.
+</Callout>
+
+## Onde ir a seguir
+
+- Visão geral de todos os adapters — [Visão Geral das Integrações](/docs/integrations/overview)
+- Claude Code com contexto completo — [Claude Code](/docs/integrations/claude-code)
+- Cursor em detalhe — [Cursor](/docs/integrations/cursor)

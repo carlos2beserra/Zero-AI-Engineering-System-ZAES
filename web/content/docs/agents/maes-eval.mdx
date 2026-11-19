@@ -1,0 +1,93 @@
+---
+title: /maes-eval
+description: Mede se o contexto MAES compilado melhora o comportamento dos agents — a partir de uma task em texto livre ou de cenários, comparando com vs sem contexto.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+`/maes-eval` é o agente avaliador do **contexto** do MAES. Ele não revisa um PR — ele
+responde uma pergunta sobre o seu Context Layer:
+
+> **O contexto que escrevi em `.maes/` realmente melhora o comportamento da IA, ou é texto inútil?**
+
+Ele roda a mesma `task` **com** o contexto MAES e **sem** ele (baseline), e um juiz
+pontua as duas respostas e calcula o **delta**. A task pode vir de um cenário
+`.eval.yaml` ou — o caminho normal — direto em **texto livre**, sem precisar criar
+nenhum arquivo.
+
+<Callout type="warn">
+  Não confunda com `/maes-analyze`, que **revisa código/PR** contra o contexto.
+  O `/maes-eval` valida o **contexto em si**. E não confunda com o eval de PR em
+  CI (`eval-pr.py`), que pontua o diff de um PR contra um rubric — mecanismo
+  diferente, descrito em [Eval em CI](/docs/reference/prompts#eval-em-ci).
+</Callout>
+
+## Quando usar
+
+- **Validar contexto novo** — registrou uma decisão ou guard? Confirme que ela muda o comportamento da IA (delta positivo).
+- **Detectar regressão** — antes de commitar mudanças em `.maes/context/`, garanta que os cenários que passavam continuam passando.
+- **Diagnosticar** — um agent "não respeita" uma regra? Veja se o problema é o texto do contexto ou o modelo.
+
+## Como invocar
+
+| Cliente             | Comando                                |
+| ------------------- | -------------------------------------- |
+| Claude Desktop/Code | `/maes-eval`                           |
+| GitHub Copilot      | `/maes-eval`                           |
+| Cursor              | `@maes-eval`                           |
+| Continue            | Auto-carregado — peça "rode a eval"    |
+| Windsurf Cascade    | Auto-carregado — peça "rode a eval"    |
+
+**Caminho normal — task em texto livre** (não exige cenário):
+
+```text
+/maes-eval corrigir responsividade da tela de pipeline dos projetos
+```
+
+O agent monta um cenário ad-hoc na hora. É um **modo suportado** do agent (declarado no `argument_hint`). Veja [Uso ad-hoc](/docs/reference/prompts#uso-ad-hoc).
+
+**Cenários `.eval.yaml`, se você tiver (opcional):**
+
+```text
+/maes-eval                          # todos os cenários
+/maes-eval --scenario soft-delete   # um cenário
+/maes-eval --agent maes-implement   # filtra por agent testado
+```
+
+## Pré-requisitos
+
+1. `.maes/` inicializado (`maes init`).
+2. `maes sync` rodado — o agent lê `synthesis/anti-hallucination.json` e `guards.json` para montar o contexto WITH.
+3. _(Só para o modo cenário)_ um ou mais `.maes/evals/scenarios/*.eval.yaml`. Para o modo ad-hoc (texto livre), **nenhum cenário é necessário**.
+
+## Saída típica
+
+```text
+MAES Eval
+──────────────────────────────────────────────────
+Cenários: 3 total
+
+  soft-delete       delta: +0.40   PASS   WITH usa deleted_at; baseline usa DELETE físico
+  pii-masking       delta:  0.00   FAIL   ambas evitam logar PII por razões diferentes
+  cqrs-billing      delta: +0.30   PASS   WITH cita DEC-012; baseline ignora
+
+Resultado: 2/3 cenários com delta positivo (67%)
+Threshold: 70%
+
+✗ FAIL — contexto MAES melhora qualidade do output em 67% dos cenários
+```
+
+Para cenários com `delta` zero ou negativo, o agent exibe as notas do juiz — use-as
+para reformular a regra (mais específica, mais prescritiva).
+
+## Garantias
+
+- **Sem custo extra** — usa o LLM do próprio cliente, sem API key.
+- **Não escreve por padrão** — só salva em `.maes/evals/results/<timestamp>.json` com sua aprovação explícita; nunca toca em `synthesis/` ou `context/`.
+- **Limite ~10 cenários/sessão** — cada cenário = 3 chamadas de LLM. Para suites maiores, filtre por `--agent` ou rode em lotes.
+
+## Próximos passos
+
+- [Evals (LLM-as-Judge)](/docs/reference/prompts) — estrutura de cenários, schema e interpretação dos resultados
+- [Catálogo de agents](/docs/agents/catalog)
+- [Setup de CI](/docs/guides/ci-setup) — o eval de PR (`eval-pr.py`), que é outro mecanismo

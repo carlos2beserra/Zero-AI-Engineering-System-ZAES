@@ -1,0 +1,58 @@
+name: MAES Governance — Dashboard semanal de saúde do contexto
+
+on:
+  schedule:
+    # Toda segunda-feira às 09:30 UTC (30 min após maes-metrics.yml)
+    - cron: "30 9 * * 1"
+
+  workflow_dispatch:
+    inputs:
+      archive_decisions:
+        description: "Arquivar decisões substituídas antes de gerar relatório"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  governance:
+    name: Relatório de governança de contexto
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Arquivar decisões antigas (se solicitado)
+        if: github.event.inputs.archive_decisions == 'true'
+        run: |
+          python scripts/ci/governance-report.py --archive-decisions
+          if git diff --quiet; then
+            echo "Sem decisões para arquivar."
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .maes/context/human/decisions.md .maes/context/human/decisions-archive.md || true
+            git commit -m "chore(context): arquiva decisões substituídas [skip ci]"
+            git push
+          fi
+
+      - name: Gerar e publicar relatório de governança no Step Summary
+        run: |
+          WEEK=$(date +"%Y-W%V")
+          echo "## 🏛️ MAES Governance — ${WEEK}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # governance-report.py já escreve no GITHUB_STEP_SUMMARY internamente
+          python scripts/ci/governance-report.py || true
+
+          echo "Relatório de governança publicado no Step Summary"

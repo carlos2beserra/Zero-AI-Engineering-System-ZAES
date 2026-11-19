@@ -1,0 +1,110 @@
+---
+title: /maes-review
+description: Revisão consultiva do diff da branch atual contra o contexto compilado — assertions, guards e ownership — emitindo um Scorecard. Advisory only.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+`/maes-review` é o **revisor consultivo** do MAES e o agente mais usado no dia
+a dia. Ele compara o diff da branch atual com o conhecimento compilado do
+projeto — assertions, guards e ownership — e emite um **MAES Review
+Scorecard**. As preocupações de segurança e de migração entram como
+heurísticas embutidas dessa revisão.
+
+<Callout type="info">
+  `/maes-review` é **advisory only**: aponta riscos e desvios, mas **nunca
+  aprova, bloqueia ou faz gate** de um PR, e **nunca muta arquivos**. A decisão
+  é sempre do time. O que é determinístico (conflitos, staleness L1-3) continua
+  sendo barrado pelo CI, não por ele.
+</Callout>
+
+## Quando usar
+
+- **Antes de abrir um PR** — rode sobre o diff da branch para um auto-review
+  contra as regras do projeto.
+- **Mudança em path crítico** — os guards relevantes àquele path entram no
+  Scorecard automaticamente.
+- **Migration ou mudança financeira/de auth** — as heurísticas de segurança e
+  migração sinalizam expand-contract, rollback, locks, soft-delete em tabela
+  imutável, exposição de PII, etc.
+
+## Como invocar
+
+| Cliente             | Comando                                          |
+| ------------------- | ------------------------------------------------ |
+| Claude Desktop/Code | `/maes-review`                                   |
+| GitHub Copilot      | `/maes-review`                                   |
+| Cursor              | `@maes-review`                                   |
+| Continue            | Auto-carregado — peça "revise o diff desta branch" |
+| Windsurf Cascade    | Auto-carregado — peça "revise o diff desta branch" |
+
+Aceita um argumento opcional de base para o diff:
+
+```
+/maes-review
+/maes-review --base origin/main
+```
+
+## Workflow
+
+1. **Pré-requisito** — verifica se `.maes/synthesis/` existe. Se não, instrui a
+   rodar `maes sync` primeiro e encerra.
+2. **Obtém o diff** — `git diff origin/main...HEAD` (ou o `--base` informado);
+   se vazio, cai para `git diff` (staged + unstaged).
+3. **Carrega o conjunto de regras** de `.maes/synthesis/` (sem traversal de
+   grafo, apenas por layer e path): todas as assertions de **layer 1-2**
+   (compliance/security), todas as de **layer 3-5 sem `paths`** (regras do
+   projeto inteiro), e as de **layer 6-7** cujos `paths` casem os arquivos do
+   diff. Guards e owners das áreas alteradas entram da mesma forma.
+4. **Revisa o diff** contra as regras + heurísticas embutidas de security,
+   migration e domain/contracts.
+5. **Emite o Scorecard** com severidade por achado (`✓` alinhado, `⚠` atenção,
+   `✗` conflito) e evidência `file:line`.
+
+<Callout type="info">
+  O escopo é estrito: **Diff → Assertions → Guards → Ownership → Scorecard**.
+  Ele **não** faz blast-radius, impact-graph, traversal de dependências,
+  raciocínio de arquitetura, governança, aprovação, delegação ou orquestração —
+  isso é deliberado para manter o review determinístico e barato.
+</Callout>
+
+## Saída típica
+
+```text
+MAES Review Scorecard
+
+Módulos afetados
+- payments (src/payments/)
+
+Assertions relevantes
+- ✗ valores monetários devem usar Decimal (src/payments/refund.service.ts:42)
+- ✓ rotas exigem @Entitlement() (src/payments/refund.controller.ts:18)
+
+Guards aplicáveis (advisory)
+- ⚠ no-edit-applied-migrations: **/migrations/*applied* casado por db/migrations/0042_init.sql
+
+Owners envolvidos
+- team:payments (src/payments/)
+
+Riscos & Recomendações
+- src/payments/refund.service.ts:42 — usar Decimal em vez de float para o valor do reembolso
+
+Resultado por dimensão
+- correctness · security · migration · domain
+```
+
+## Pré-requisito
+
+`/maes-review` lê de `.maes/synthesis/` em runtime — rode `maes sync` antes
+para garantir que o contexto compilado está fresco. Para inspecionar
+exatamente o que ele receberia:
+
+```bash
+maes explain context --agent maes-review --task "add deleted_at to payments"
+```
+
+## Próximos passos
+
+- [Usando os agents](/docs/guides/using-agents)
+- [/maes-eval](/docs/agents/maes-eval)
+- [Catálogo de agents](/docs/agents/catalog)

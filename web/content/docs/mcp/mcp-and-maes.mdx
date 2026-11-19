@@ -1,0 +1,71 @@
+---
+title: MCP + MAES — como se conectam
+description: A relação entre o protocolo MCP e a arquitetura MAES — onde MCP é fundação, onde MAES adiciona.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+MCP e MAES são **complementares**, não concorrentes. Esta página explica
+onde um termina e o outro começa.
+
+## Definições rápidas
+
+- **MCP** (Model Context Protocol) — protocolo aberto da Anthropic que
+  padroniza como agents consultam fontes externas de contexto.
+- **MAES** — plataforma opinada de Context Engineering que **expõe um
+  servidor MCP nativo** + adiciona compiler, governance, agents e adapters.
+
+## Pirâmide de capacidades
+
+```
+       ┌────────────────────────────────────┐
+       │  MAES Agent Layer + Governance     │  ← opinião + workflow
+       ├────────────────────────────────────┤
+       │  MAES Compiler + Adapters          │  ← determinismo + multi-cliente
+       ├────────────────────────────────────┤
+       │  MAES Context Layer (human/inferred)│ ← curadoria + versionamento
+       ├────────────────────────────────────┤
+       │  MCP — protocolo de transporte     │  ← fundação aberta
+       └────────────────────────────────────┘
+```
+
+MCP é a **fundação aberta**. MAES adiciona as camadas que transformam
+"servidor que serve arquivos" em **plataforma de Context Engineering**.
+
+## O que MCP resolve sozinho
+
+- Transporte uniforme de resources, tools e prompts.
+- Compatibilidade entre clientes (Claude, Cursor, Continue, Windsurf, …).
+- Discovery padronizada.
+
+## O que MCP **não** resolve (e MAES sim)
+
+| Necessidade                                   | MCP puro    | MAES                     |
+| --------------------------------------------- | ----------- | ------------------------ |
+| Separar conhecimento humano vs detectado      | Você decide | `human/` + `inferred/`   |
+| Pipeline determinístico de compilação         | Não         | Compiler de 7 estágios   |
+| Adapter para cliente sem MCP nativo (Copilot) | N/A         | Documentation Layer      |
+| Ownership e staleness                         | Não         | `OWNERSHIP.yaml` + audit |
+| CI gate quando contexto crítico vence         | Não         | `maes validate`          |
+| Agents externos universais                    | Não         | `/maes-analyze`, etc.    |
+
+## Casos típicos
+
+- **Você quer só MCP cru** — sirva seus arquivos com qualquer servidor MCP
+  genérico. Vai funcionar — sem compilação, sem governança.
+- **Você quer MAES sem MCP** — também funciona. Os adapters da
+  Documentation Layer (CLAUDE.md etc.) atendem todos os clientes mesmo
+  sem MCP ligado.
+- **Você quer os dois** — caminho recomendado. Adapter carrega o essencial,
+  MCP entrega o resto sob demanda.
+
+<Callout type="info">
+  Se um futuro protocolo substituir MCP, a MCP Layer do MAES é o único ponto a
+  trocar. Compiler, Context, Governance e Documentation seguem iguais.
+</Callout>
+
+## Próximos passos
+
+- [MCP Layer no MAES](/docs/architecture/mcp-layer)
+- [Setup por cliente](/docs/mcp/setup-per-client)
+- [As 6 camadas](/docs/architecture/overview)

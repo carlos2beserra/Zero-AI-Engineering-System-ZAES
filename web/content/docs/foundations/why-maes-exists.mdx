@@ -1,0 +1,252 @@
+---
+title: Por que MAES existe
+description: IA escreve código tecnicamente correto e organizacionalmente errado. O gargalo é conhecimento organizacional governado — não prompts, não CLAUDE.md, não RAG, não agentes especializados.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+AI coding agents ficaram **excelentes em escrever código tecnicamente correto**.
+E ainda assim, todo time que adota IA com seriedade chega ao mesmo lugar:
+
+> "O código compila, passa nos testes, e mesmo assim **não é o código que
+> deveríamos ter escrito**."
+
+O problema não é a competência do modelo. É o que ele **não sabe** sobre o seu
+projeto — e que ninguém deu a ele de forma confiável, atualizada e auditável.
+
+MAES existe para resolver esse buraco. Este texto explica por quê — e por que as
+soluções óbvias não chegam lá.
+
+## O problema invisível
+
+Quando um dev sênior escreve código, ele carrega na cabeça um contexto que **não
+está no diff**:
+
+- Decisões arquiteturais tomadas há meses — e as alternativas que foram
+  rejeitadas, e por quê.
+- Restrições de compliance, segurança e performance específicas do negócio.
+- Acordos com times vizinhos sobre contratos, ownership e fronteiras.
+- Padrões da casa — "aqui usamos CQRS, não service layer".
+- Histórico — "tentamos essa abordagem em 2023, não funcionou por X".
+
+Um agent de IA **não tem nada disso**. Ele tem:
+
+- O código que você cola no chat.
+- Um `CLAUDE.md` que alguém escreveu há 6 meses e ninguém atualiza.
+- Talvez umas regras genéricas em `.cursor/rules/`.
+
+O resultado é previsível:
+
+- Reimplementa padrões já rejeitados.
+- Ignora decisões arquiteturais não documentadas.
+- Quebra contratos com times vizinhos.
+- Produz código **organizacionalmente errado** — limpo, testado e na direção
+  errada.
+
+Esse conhecimento existe. Ele só não está em lugar nenhum que o agent consiga
+ler de forma confiável. Tornar esse conhecimento **explícito, estruturado,
+versionado e governado** é o problema que o MAES resolve.
+
+## Por que as alternativas não resolvem
+
+### "Eu já escrevo prompts bons"
+
+Prompt engineering é **local**: vale para uma conversa. Você reescreve as mesmas
+regras toda sessão, todo PR, toda feature nova. O conhecimento mora na cabeça de
+quem escreveu o prompt, não no repositório. Não escala para o time, não viaja com
+o código, e não há nada que impeça um merge quando alguém esquece a regra.
+
+### "Tenho um CLAUDE.md gigante"
+
+Funciona **uma vez**. Em três meses está desatualizado e ninguém percebe —
+porque não tem dono, não tem prazo de validade, não tem gate. Vira mais um
+README que mente. Pior: um CLAUDE.md grande e parcialmente errado é mais
+perigoso que nenhum, porque o agent confia nele.
+
+### "Vou usar RAG / embeddings do código"
+
+RAG do **código** ensina a IA sobre o que **já existe**. Não ensina sobre o que o
+time **decidiu**, **rejeitou** ou **proibiu**. Decisões arquiteturais, compliance
+e contratos não estão no código — estão na cabeça do time e nas conversas que
+nunca viraram arquivo. Indexar o repositório recupera o *que*; não recupera o
+*porquê* nem o *não faça*.
+
+### "O modelo novo é mais inteligente"
+
+Modelo mais inteligente sem contexto organizacional produz **erros mais
+sofisticados, mais rápido**. O gargalo não é a capacidade de raciocínio — é o
+conhecimento sobre o seu projeto. Capacidade extra sem contexto só amplia o
+estrago: o código fica mais convincente e o desvio fica mais difícil de pegar no
+review.
+
+<Callout type="info">
+  As quatro abordagens acima falham pelo mesmo motivo: tratam contexto como algo
+  **efêmero e individual** (um prompt, um arquivo, um índice) em vez de **um
+  ativo organizacional que precisa ser governado**.
+</Callout>
+
+## O insight: o problema não é entrega, é governança
+
+É tentador concluir que basta "entregar mais contexto ao agent". Mas qualquer
+time que já tentou manter um CLAUDE.md sabe a verdade desconfortável:
+
+> Contexto sem governança apodrece.
+
+Conhecimento organizacional não é um documento que você escreve uma vez. Ele é
+um ativo vivo, e como todo ativo vivo ele exige:
+
+- **Dono** — alguém responsável por cada pedaço de contexto.
+- **Revisão** — um prazo de validade, não um "para sempre" silencioso.
+- **Validade** — proveniência auditável: de onde veio, quando foi confirmado.
+- **Enforcement** — um gate que falha quando o contexto crítico está vencido ou
+  quando o código diverge do que foi decidido.
+
+Sem isso, todo esforço de "documentar para a IA" converge para o mesmo destino:
+mais um diretório que ninguém mantém. **O diferencial do MAES não é entregar
+contexto — é governá-lo.**
+
+## O que o MAES é, de fato
+
+MAES é um **compilador de contexto organizacional** com governança embutida. A
+arquitetura tem uma espinha dorsal clara:
+
+**Context → Compiler → MCP → Governance**
+
+### Context Layer — a fonte de verdade
+
+Todo conhecimento mora no repositório, versionado, separado fisicamente em dois
+acervos:
+
+- `.maes/context/human/` — o que **só humano sabe**: compliance, decisões
+  arquiteturais, contratos, invariantes de negócio, padrões de revisão.
+- `.maes/context/inferred/` — o que o **CLI detecta** do código: stack, módulos,
+  convenções. Regenerado, nunca editado à mão.
+
+A separação garante que nunca se confunde **o que o time decidiu** com **o que o
+código já mostra**.
+
+### Compiler Layer — determinístico, sem LLM no caminho
+
+Um pipeline de sete estágios (`parse → normalize → dedup → conflict-resolve →
+priority-merge → render → write`) transforma o contexto em **assertions** —
+afirmações atômicas, classificadas por camada de autoridade e proveniência.
+Mesma entrada, mesma saída, zero alucinação. É o que torna o contexto
+reprodutível em CI.
+
+### MCP Layer — a superfície principal de entrega
+
+O servidor MCP é como o contexto **chega ao agent**: filtrado por tarefa, em
+runtime, sob demanda — em vez de inflar todo prompt com tudo. Ele entrega o
+contexto quente (compliance, segurança) sempre, e o contexto morno (domínio,
+arquitetura) pontuado por relevância. É a interface entre o conhecimento
+compilado e qualquer cliente de IA, sem copiar arquivos estáticos e sem
+desperdiçar tokens.
+
+A **Documentation Layer** (adapters como `CLAUDE.md`, `.cursor/rules/`,
+`.windsurfrules`) continua existindo como entrega estática para clientes sem
+MCP — mas é uma materialização do mesmo contexto compilado, não uma fonte
+paralela.
+
+### Governance Layer — o que impede o apodrecimento
+
+`OWNERSHIP.yaml` dá dono e prazo a cada pedaço de contexto. Staleness tracking
+torna o vencimento visível. **Guards** declaram quais caminhos são sensíveis.
+`maes validate` e os CI gates bloqueiam o merge quando um conflito não resolvido
+existe ou quando o contexto crítico venceu. É o que transforma "um diretório de
+markdown" em **infraestrutura**.
+
+## Assertions, ownership e guards: a unidade real do sistema
+
+O ativo do MAES não são arquivos nem prompts — são três primitivos governáveis:
+
+- **Assertions** são a unidade atômica de contexto. Não "um documento sobre
+  pagamentos", mas "valores monetários usam `Decimal`, layer 5, dono
+  `team:payments`, confiança explícita, confirmado em 2026-05". Atômicas, elas
+  podem ser priorizadas por camada, detectadas em conflito, e auditadas uma a
+  uma.
+- **Ownership** liga cada assertion a um responsável e a um prazo de revisão.
+  Sem dono, conhecimento não é mantido — é abandonado.
+- **Guards** declaram caminhos sensíveis e a política sobre eles. São a ponte
+  entre "o time decidiu" e "o agent é avisado antes de agir".
+
+Conflito entre assertions da mesma camada bloqueia a compilação (exit 1, CI
+falha); entre camadas diferentes, a de maior autoridade vence e a resolução fica
+registrada. Proveniência — de onde veio cada afirmação, humano vs. inferido — é
+preservada e nunca promovida silenciosamente. É isso que diferencia conhecimento
+**governado** de um arquivo de texto.
+
+## Agentes são consumidores, não o produto
+
+É tentador montar a plataforma em torno de agentes-persona especializados — um
+para backend, um para segurança, um para migração, um para review. MAES
+deliberadamente não faz isso.
+
+A razão é direta: um agente-persona por domínio **não acrescenta conhecimento —
+apenas re-empacota o contexto que o CLAUDE.md e o MCP já entregam**. A maioria do
+conhecimento organizacional é global (não tem path associado), então
+"especializar" por domínio é uma persona sem substância nova. A única decisão que
+um agent de fato acrescenta é a de **review** — e essa vive em um único workflow
+advisory, o [`/maes-review`](/docs/agents/maes-review).
+
+O reposicionamento vale para qualquer agent:
+
+- Agentes são **consumidores opcionais** do contexto governado, não a fonte
+  dele.
+- São **interfaces e mecanismos de entrega** — uma forma conveniente de invocar
+  o conhecimento, ao lado do MCP e dos adapters.
+- O conhecimento real vive nas assertions, no ownership, nos guards e na
+  governança — não na persona.
+
+Trocar de cliente de IA, ganhar um modelo melhor ou remover um agent não destrói
+nada do que importa. O ativo permanece no repositório.
+
+## O moat real
+
+É um erro comum achar que o diferencial do MAES é o compilador ou os adapters.
+Não é. Compilador e adapters são **mecanismo** — replicáveis, comoditizáveis,
+substituíveis.
+
+O diferencial defensável é o **conhecimento organizacional acumulado e
+governado**:
+
+- 18+ meses de `.maes/context/human/` curado no git do cliente — decisões,
+  rejeições, contratos e invariantes que não existem em lugar nenhum mais.
+- Proveniência auditável de cada assertion.
+- Ownership e prazos que mantêm o acervo vivo.
+- Guards e gates que impõem o que foi decidido.
+
+Esse acervo gera um flywheel: contexto melhor → agents mais precisos → mais
+confiança do time → mais curadoria. Quanto mais tempo o time usa, mais
+insubstituível fica o contexto — porque ele codifica a memória organizacional, e
+memória organizacional não se migra com um `export`.
+
+<Callout type="info">
+  **MAES não é uma plataforma de agentes. MAES é uma plataforma de Context
+  Governance para AI-assisted software engineering.** O compilador entrega o
+  contexto; a governança garante que ele continua verdadeiro.
+</Callout>
+
+## O ganho concreto
+
+| Sem MAES                                     | Com MAES                                            |
+| -------------------------------------------- | --------------------------------------------------- |
+| Cada dev reinventa contexto a cada sessão    | Contexto único, versionado, viaja com o repo        |
+| CLAUDE.md apodrece sem ninguém perceber      | Ownership + staleness rastreados, CI bloqueia merge |
+| Conhecimento sem proveniência nem dono       | Assertions com camada, dono, prazo e origem         |
+| Vendor lock-in num cliente específico        | Mesmo contexto compila e serve para 5+ clientes     |
+| Decisões arquiteturais "na cabeça do sênior" | Decisões versionadas; guards avisam antes de agir   |
+| Prompt gigante a cada turno                  | MCP entrega sob demanda — tokens enxutos            |
+
+## Para quem MAES é
+
+- **Times** com mais de 2 devs usando IA — onde alinhamento importa.
+- **Repositórios** com decisões arquiteturais não óbvias a partir do diff.
+- **Stacks** com compliance, segurança ou contratos relevantes.
+- **Organizações** que querem que a IA **escale o sênior**, não o substitua.
+
+## Próximos passos
+
+- [As camadas do MAES](/docs/architecture/overview)
+- [Por que MCP importa](/docs/mcp/why-mcp-matters)
+- [Governance Layer](/docs/architecture/governance-layer)
+- [Quick Start](/docs/getting-started/quick-start)

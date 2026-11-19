@@ -1,0 +1,60 @@
+---
+title: "Integracao com Continue"
+description: "Como o MAES gera rules para Continue em .continue/rules e mantem tudo sincronizado via maes sync."
+---
+
+## Arquivos gerados
+
+Quando voce executa `maes sync`, o MAES gera dois tipos de arquivo para Continue:
+
+- `.continue/rules/maes-context.md` — contexto global do projeto (hot + warm)
+- `.continue/rules/{agent}.md` — regra por agent com escopo por glob
+
+Esses arquivos sao gerados em `.maes/adapters/continue/.continue/rules/` e copiados para a raiz do projeto durante o fluxo de sync/quickstart.
+
+## Como o Continue consome as rules
+
+O Continue carrega os arquivos em `.continue/rules/` como regras de projeto. O MAES usa frontmatter para descrever cada regra e deixar claro quando ela deve ser sempre aplicada.
+
+Exemplo de frontmatter gerado:
+
+```md
+---
+name: maes-context
+description: MAES global context for this project
+alwaysApply: true
+---
+```
+
+## Fluxo recomendado
+
+```bash
+# 1) Edite a fonte de verdade
+nano .maes/context/human/business-rules.md
+
+# 2) Recompile adapters
+maes sync
+
+# 3) Versione os arquivos gerados
+git add .maes/context/human/ .continue/rules/
+```
+
+<Callout type="warning">
+  Nao edite `.continue/rules/*` manualmente. Esses arquivos sao outputs do
+  compilador e serao sobrescritos no proximo `maes sync`.
+</Callout>
+
+## Atualizacao no upgrade
+
+Projetos existentes podem habilitar Continue adicionando `continue` em `adapters` no `.maes/config.yaml`.
+
+```yaml
+adapters:
+  - claude
+  - cursor
+  - continue
+  - windsurf
+  - copilot
+```
+
+A partir dai, `maes sync` e `maes upgrade` passam a manter os arquivos de Continue junto com os demais adapters.

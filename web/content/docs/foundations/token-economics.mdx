@@ -1,0 +1,122 @@
+---
+title: "A Economia de Tokens no Desenvolvimento com IA"
+description: "Por que IA em dev é cara, onde o custo realmente está, e como o MAES reduz esse custo estruturalmente via Context Engineering."
+---
+
+## A ideia central
+
+> **O custo da IA no desenvolvimento não está na geração de código —
+> está na reconstrução de contexto.**
+
+Quando um time mede o que paga em tokens, a intuição costuma ser que "o LLM escreveu muita coisa". Na prática, a maior parte do custo já foi gasta **antes** do modelo escrever a primeira linha: para gerar 50 linhas de código de qualidade, a IA frequentemente leu milhares de linhas de código existente, arquivos de configuração, ADRs, exemplos e instruções.
+
+Cada nova sessão, cada novo prompt, cada novo agente — a IA precisa **reler, reentender, reinferir**. Você paga por esse trabalho em tokens, todas as vezes.
+
+---
+
+## Hierarquia de consumo de tokens
+
+Em ordem aproximada, do mais caro para o mais barato:
+
+| #   | Tarefa                               | Por que é cara                                                                                     |
+| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| 1   | **Entendimento de sistemas grandes** | Monorepos, arquitetura completa, auditorias — exige varrer o repositório inteiro                   |
+| 2   | **Planejamento complexo**            | Refactors, migrações, roadmap técnico — modelo precisa ver muitos arquivos e considerar trade-offs |
+| 3   | **Revisão de PR grande**             | Múltiplos arquivos modificados + contexto de antes e depois                                        |
+| 4   | **Debugging complexo**               | Logs, hipóteses, sistemas distribuídos — itera abrindo arquivo após arquivo                        |
+| 5   | **Documentação extensa**             | ADRs, RFCs, relatórios — exige consolidar contexto disperso                                        |
+| 6   | **Features completas**               | Múltiplos arquivos e camadas (controller → service → repo → migration)                             |
+| 7   | **Código isolado**                   | Função única, snippet, ajuste pontual — menor custo relativo                                       |
+
+### O insight crítico
+
+> **80–95% do custo de tokens vem de leitura e contexto.
+> Apenas 5–20% vem de escrever código.**
+
+Esse desbalanço é o motivo pelo qual qualquer otimização séria de custo de IA passa por **reduzir o que a IA precisa reler**, não por escrever menos código.
+
+---
+
+## Padrões anti-pattern que queimam tokens
+
+Workflows comuns que multiplicam o custo sem perceber:
+
+- **Reenviar contexto repetido** — re-pagar pelo mesmo entendimento todo prompt. A IA esquece entre sessões; sem um contexto persistente externo, cada sessão recomeça do zero.
+- **Arquivos gigantes de instrução** — `CLAUDE.md` ou prompt monolítico de 10k+ tokens carregado em cada chamada, mesmo quando 90% é irrelevante para a tarefa atual.
+- **Agentes genéricos com contexto excessivo** — um único agente "faz tudo" e por isso precisa carregar tudo: backend, frontend, infra, compliance.
+- **Repositório inteiro no prompt** — enviar 200 arquivos quando só 2–3 são relevantes para a task. Comum em "code copilots" que indexam o repo sem priorização.
+
+O resultado típico: contas de API que crescem linearmente com o número de devs e sessões, sem ganho proporcional de qualidade.
+
+---
+
+## O que economiza tokens: Context Engineering
+
+A premissa do MAES é tratar contexto como **artefato versionado e reutilizável**, não como input bruto recriado a cada prompt.
+
+### 1. Enviar apenas o necessário
+
+Cada prompt para a IA deve carregar **só** quatro coisas:
+
+- **Task** — o que precisa ser feito
+- **Arquivos relevantes** — não o repositório inteiro
+- **Constraints** — compliance, contratos, decisões arquiteturais aplicáveis
+- **Output esperado** — formato e nível de detalhe
+
+### 2. Hierarquia de contexto
+
+```
+Project  →  Domain  →  Feature  →  Task
+```
+
+- **Project**: stack, convenções, arquitetura geral (raro mudar)
+- **Domain**: regras de negócio do bounded context atual
+- **Feature**: contratos e invariantes da feature em desenvolvimento
+- **Task**: pedido específico
+
+Quanto mais alto na hierarquia, mais raramente muda — e mais barato fica reaproveitar.
+
+### 3. Agentes especializados
+
+Em vez de um agente genérico, agentes com escopo restrito:
+
+- `architect` — só vê arquitetura e ADRs
+- `backend` — só vê camada de serviço/repo
+- `qa` — só vê testes e contratos
+- `metrics` — só vê telemetria e dashboards
+
+Cada um carrega 5–10% do contexto que um agente genérico carregaria.
+
+### 4. Artefatos intermediários
+
+Em vez da IA reconstruir o entendimento toda vez, o MAES gera e versiona:
+
+- **Architecture summaries** — descrição compacta de camadas e dependências
+- **Inferred maps** — mapas de módulos, stack, data model
+- **Domain models** — invariantes, fluxos de negócio
+- **Compiled adapters** — `CLAUDE.md`, `.cursor/rules/`, `copilot-instructions.md`
+
+Esses artefatos são lidos uma vez e reaproveitados em todas as sessões.
+
+---
+
+## Como o MAES se posiciona
+
+> **MAES resolve isso estruturando contexto — em vez de depender de contexto bruto.**
+
+Em termos práticos, o MAES:
+
+- **Reduz carga de leitura da IA** em cada sessão — adapters compilados substituem releitura do repositório
+- **Evita reprocessamento** — `context/inferred/` é gerado uma vez por mudança estrutural, não por prompt
+- **Transforma contexto humano** (regras de compliance, decisões, padrões) **em artefatos reutilizáveis** que viajam com o repositório
+- **Torna workflows previsíveis e determinísticos** — o core CLI (`init`, `sync`, `validate`, `audit`) não chama LLM; só a Agent Layer externa o faz, sob controle do usuário
+
+O resultado: a conta de tokens passa a refletir trabalho **novo** (geração de código e análise de mudanças), não trabalho repetido de reconstruir o que o time já sabe.
+
+---
+
+## Próximos passos
+
+- [Quickstart](/docs/getting-started/quick-start) — colocar o MAES rodando no seu projeto
+- [As 7 Camadas de Prioridade](/docs/architecture/context-layer) — como o MAES hierarquiza o contexto humano
+- [Runtime Lifecycle](/docs/architecture/compiler-layer) — quando cada artefato é gerado e consumido

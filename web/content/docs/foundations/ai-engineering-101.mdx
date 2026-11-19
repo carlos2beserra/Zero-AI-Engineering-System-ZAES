@@ -1,0 +1,69 @@
+---
+title: AI Engineering — visão geral
+description: A pilha completa de disciplinas que tornam IA produtiva em times de engenharia — Context, Agent, MCP, Governance.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+"AI Engineering" virou termo guarda-chuva. Esta página define **o que
+significa no contexto do MAES** e onde cada disciplina se encaixa.
+
+## A pilha
+
+```
+┌─────────────────────────────────────────────────┐
+│ Agent Engineering                               │
+│ "que perfis especializados operam o contexto"  │
+├─────────────────────────────────────────────────┤
+│ Context Engineering                             │
+│ "que conhecimento humano + detectado o agent vê"│
+├─────────────────────────────────────────────────┤
+│ MCP / protocolos de contexto                    │
+│ "como agent consulta sob demanda"               │
+├─────────────────────────────────────────────────┤
+│ Governance                                       │
+│ "quem é dono, quando expira, o que bloqueia"    │
+├─────────────────────────────────────────────────┤
+│ Prompt Engineering (local, por conversa)        │
+│ "a frase certa para uma tarefa específica"      │
+└─────────────────────────────────────────────────┘
+```
+
+## O que cada uma faz
+
+| Disciplina              | Escopo          | Artefato                   |
+| ----------------------- | --------------- | -------------------------- |
+| Prompt Engineering      | Conversa única  | A frase no chat            |
+| **Context Engineering** | Repo / time     | `.maes/context/human/*`    |
+| **Agent Engineering**   | Repo / time     | `.maes/agents/*.yaml`      |
+| MCP / protocolos        | Sessão do agent | Servidor MCP (`maes serve`) |
+| Governance              | Organização     | `OWNERSHIP.yaml`, CI gates |
+
+## Por que prompt engineering sozinho não basta
+
+Prompt engineering é **necessário mas insuficiente**. Resolve o turno atual,
+mas:
+
+- Não viaja com o repo.
+- Não escala para o time.
+- Não persiste decisões arquiteturais.
+- Não bloqueia merge quando contexto está errado.
+
+Por isso o MAES foca nas camadas **acima** de prompt engineering.
+
+## Onde o MAES se posiciona
+
+MAES é uma **plataforma opinada** que cobre Context + Agent + MCP +
+Governance. Prompt engineering continua sendo trabalho do dev — mas agora
+sobre uma base sólida.
+
+<Callout type="info">
+  Não existe "AI Engineering" sem essas camadas. Existe **time usando IA com
+  sorte** — e o resultado é dívida técnica em escala.
+</Callout>
+
+## Próximos passos
+
+- [Por que MAES existe](/docs/foundations/why-maes-exists)
+- [Context Engineering](/docs/foundations/context-engineering)
+- [Agent Engineering](/docs/foundations/agent-engineering)

@@ -1,0 +1,116 @@
+---
+title: Criar a partir de um Blueprint
+description: Fluxo greenfield do MAES — escolha uma aplicação homologada pela organização e receba um projeto criado com ferramentas oficiais, já AI-ready. O usuário escolhe; o agente executa; a IA nunca decide a stack.
+---
+
+## Quando usar
+
+Use este fluxo para **iniciar um projeto novo** (greenfield). Para **onboarding de um projeto existente** (brownfield), veja o [Quickstart](/docs/getting-started/quick-start) com `/maes-analyze`.
+
+O `maes init` oferece os dois caminhos ao final:
+
+```
+Next steps — choose your path:
+
+  NEW project (greenfield) — create from an official Blueprint:
+       /maes-create
+  EXISTING project (brownfield) — onboard your codebase:
+       /maes-analyze
+```
+
+## O que é um Blueprint
+
+Um **Blueprint** é uma **unidade de governança técnica de aplicação homologada** — não é um template de código nem um gerador de projetos ([ADR 0001](https://github.com/Maxxidata/maxxi-ai-engineering-system/blob/main/docs/adr/0001-blueprint-como-contrato-de-aplicacao-homologada.md)). A organização define quais aplicações são homologadas; o desenvolvedor escolhe uma.
+
+Cada Blueprint tem quatro partes com responsabilidades distintas:
+
+| Parte | Responsabilidade |
+| --- | --- |
+| `blueprint.yaml` | Contrato determinístico (id, nome, tipo, versão, resumo, stack). Sem lógica de decisão. |
+| `prompt.md` | Contexto operacional para o agente (objetivo, padrões, restrições). Não executa comandos. |
+| `bootstrap/bootstrap.yaml` | **Única fonte de execução** — a receita Official First. |
+| `context/human/` | Contexto organizacional inicial (princípios, decisões) semeado no projeto. |
+
+<Callout type="info">
+  **Blueprint Selection Principle.** A organização define os Blueprints. O usuário
+  escolhe explicitamente. O agente **nunca** decide a stack, recomenda tecnologia
+  ou infere um Blueprint a partir de uma descrição vaga. Dizer *"quero um sistema
+  administrativo"* não faz o MAES escolher por você — ele re-apresenta o catálogo
+  e pede uma escolha explícita.
+</Callout>
+
+## Catálogo homologado
+
+Os Blueprints ficam empacotados no CLI e estão disponíveis mesmo sem projeto:
+
+```bash
+maes blueprint list
+```
+
+```
+Aplicações homologadas:
+
+  1. NestJS API Corporativa  [nestjs-api]
+     NestJS / TypeScript, Prisma / PostgreSQL, Zod / Jest, Docker / pnpm
+  2. React SPA Corporativo  [react-spa]
+     React / TypeScript / Vite, Tailwind / shadcn/ui, React Router / TanStack Query / Zod, Vitest / Docker / pnpm
+```
+
+Comandos determinísticos do catálogo (o CLI nunca cria projeto nem roda scaffold):
+
+| Comando | O que faz |
+| --- | --- |
+| `maes blueprint list` | Lista as aplicações homologadas. |
+| `maes blueprint show <id>` | Mostra o contrato/resumo canônico. |
+| `maes blueprint prompt <id>` | Emite o contexto operacional (`prompt.md`) para o agente. |
+| `maes blueprint bootstrap <id>` | Emite a receita de execução (`bootstrap.yaml`). |
+| `maes blueprint seed <id>` | Materializa `context/human/` em `.maes/context/human/`. |
+| `maes blueprint validate [<id>]` | Valida a integridade de um Blueprint (ou de todos). |
+
+## Passo a passo
+
+### Passo 1 — Inicializar
+
+```bash
+mkdir minha-api && cd minha-api
+maes init
+```
+
+Isso cria `.maes/` e instala o comando `/maes-create` nos clientes de IA detectados.
+
+### Passo 2 — Invocar `/maes-create`
+
+Abra seu cliente de IA na pasta e invoque:
+
+| Cliente | Como invocar |
+| --- | --- |
+| Claude (Desktop/Code) | `/maes-create` (slash command) |
+| GitHub Copilot | `/maes-create` (slash command) |
+| Cursor | `@maes-create` (@ mention) |
+
+### Passo 3 — Escolher, confirmar, criar
+
+O agente:
+
+1. Apresenta o catálogo (`maes blueprint list`).
+2. Recebe sua **escolha explícita** (por número ou id). Escolha inválida/vaga → re-apresenta o catálogo.
+3. Mostra o resumo (`maes blueprint show`) e carrega o contexto operacional (`maes blueprint prompt`).
+4. Pergunta: **"Confirmar criação?"**
+5. Executa **exclusivamente** o `bootstrap.yaml` via ferramentas oficiais (ex.: Nest CLI, Vite).
+6. Semeia o contexto organizacional (`maes blueprint seed`).
+7. Compila (`maes sync`) → gera CLAUDE.md, Copilot, Cursor, Continue, Windsurf, MCP.
+
+## Resultado
+
+Ao final você tem um projeto:
+
+- Criado pelas **ferramentas oficiais** do ecossistema (o MAES nunca reimplementa scaffolding).
+- Com a **stack homologada** aplicada — sem decisões arquiteturais inferidas pela IA.
+- Com `.maes/context/human/` **populado** desde o nascimento (hot context não-vazio).
+- **AI-ready**: adapters gerados e prontos para uso em todos os clientes.
+
+<Callout type="info">
+  Official First: o MAES orquestra `Vite`, `Nest CLI`, `Prisma CLI`, `pnpm` e
+  afins — nunca os substitui. A receita de cada Blueprint vive em
+  `bootstrap/bootstrap.yaml`, a única fonte de execução.
+</Callout>

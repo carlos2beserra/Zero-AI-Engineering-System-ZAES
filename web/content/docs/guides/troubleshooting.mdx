@@ -1,0 +1,237 @@
+---
+title: "Troubleshooting"
+description: "Problemas comuns com o CLI do MAES e como resolver cada um."
+---
+
+## maes: command not found
+
+**Causa:** O pipx não está no PATH do sistema ou a instalação falhou silenciosamente.
+
+**Diagnóstico:**
+
+```bash
+# Verificar se pipx está instalado
+pipx --version
+
+# Verificar se maes está na lista de pacotes instalados via pipx
+pipx list
+```
+
+**Fix:**
+
+```bash
+# Adicionar o diretório do pipx ao PATH
+pipx ensurepath
+
+# No Linux/macOS, recarregar o shell
+source ~/.bashrc   # ou ~/.zshrc dependendo do shell
+
+# No Windows (PowerShell), adicionar manualmente ao PATH:
+# Settings → System → About → Advanced System Settings → Environment Variables
+# Adicionar %USERPROFILE%\.local\bin ao Path
+
+# Verificar se funcionou
+maes --version
+```
+
+Se `pipx list` mostra o maes mas o comando ainda não é encontrado, o problema é o PATH. Se `pipx list` não mostra o maes, reinstale:
+
+```bash
+pipx install maes
+```
+
+---
+
+## maes sync falha com "conflito UNRESOLVED"
+
+**Causa:** Dois arquivos de `context/human/` contêm assertions que se contradizem diretamente e estão na mesma layer — a hierarquia de layers não pode resolver automaticamente.
+
+**Diagnóstico:**
+
+```bash
+# Ver detalhes do conflito
+maes explain conflict --id CONFLICT-001
+
+# Listar todos os conflitos ativos
+maes explain status
+```
+
+O output de `maes explain conflict` mostra:
+
+- As duas assertions em conflito
+- De quais arquivos elas vêm
+- O texto exato de cada uma
+- Sugestão de como resolver
+
+**Fix:**
+
+1. Abra o arquivo de contexto indicado (por exemplo, `.maes/context/human/decisions.md`)
+2. Localize as duas assertions contraditórias
+3. Remova uma delas ou reescreva para que não se contradigam
+4. Execute `maes sync` novamente
+5. Confirme com `maes validate`
+
+Se o conflito for complexo (duas abordagens igualmente válidas), registre a decisão tomada como um DEC-NNN em `decisions.md` e remova a assertion contradita.
+
+---
+
+## maes validate falha no CI por staleness
+
+**Causa:** Um arquivo de contexto de Layer 1, 2 ou 3 não foi modificado há tempo suficiente enquanto o código nas paths monitoradas evoluiu. O `staleness_score` ultrapassou 0.8.
+
+**Diagnóstico:**
+
+```bash
+maes doctor
+# ou
+maes explain status
+```
+
+O output indica qual layer está com score crítico, qual arquivo está envolvido, e há quantos dias ele não é modificado.
+
+**Fix:**
+
+1. Abra o arquivo indicado (por exemplo, `.maes/context/human/compliance.md`)
+2. Revise o conteúdo: ele ainda descreve a realidade atual do projeto?
+3. **Se algo mudou:** atualize o arquivo com as informações corretas
+4. **Se nada mudou e o arquivo está correto:** faça um commit no arquivo para resetar o timer de staleness (o `git log` vai registrar uma nova data de modificação)
+
+```bash
+# Após atualizar o arquivo
+maes sync
+maes validate
+
+# Commitar as mudanças (incluindo synthesis/)
+git add .maes/context/human/compliance.md .maes/synthesis/
+git commit -m "chore(context): update compliance staleness"
+```
+
+<Callout type="info">
+  Layers 4-6 com staleness crítico geram apenas um aviso, não bloqueiam o CI. Só
+  as layers 1-3 (Compliance, Security, Contracts) bloqueiam.
+</Callout>
+
+---
+
+## CLAUDE.md não está sendo gerado
+
+**Causa:** `maes sync` não foi executado ainda, falhou silenciosamente, ou o adapter de Claude Code não está habilitado na configuração.
+
+**Diagnóstico:**
+
+```bash
+# Verificar se o CLAUDE.md existe
+ls CLAUDE.md
+
+# Rodar sync com output detalhado para ver onde falhou
+maes sync --verbose
+```
+
+**Fix:**
+
+Se `maes sync --verbose` mostra erros no estágio ADAPTERS, verifique se `claude_code` está habilitado em `.maes/config.yaml`:
+
+```yaml
+adapters:
+  claude_code: true
+  cursor: true
+  windsurf: false
+  copilot: false
+```
+
+Se a configuração estiver correta mas o arquivo ainda não é gerado, verifique se há permissão de escrita na raiz do projeto:
+
+```bash
+# Linux/macOS
+ls -la CLAUDE.md
+
+# Forçar regeneração
+maes sync --force
+```
+
+---
+
+## Hot context excede 800 tokens
+
+**Causa:** As layers 1-3 têm assertions demais ou muito verbosas. O compilador não consegue gerar o `anti-hallucination.json` dentro do limite.
+
+**Diagnóstico:**
+
+```bash
+maes explain status
+```
+
+O output mostra o breakdown de tokens por assertion no hot context, identificando quais são as maiores.
+
+**Fix:**
+
+1. Identifique as assertions mais longas no hot context via `maes explain status`
+2. Abra o arquivo de origem (geralmente `compliance.md` ou `integrations.md`)
+3. Condense assertions verbosas sem perder informação crítica
+4. Remova redundâncias — assertions que cobrem o mesmo ponto de ângulos diferentes
+5. Execute `maes sync` e verifique se o limite foi respeitado
+
+```bash
+maes sync
+maes explain status  # verificar novo tamanho do hot context
+```
+
+Se o projeto genuinamente tem muitas regras de Layer 1-3, considere qual informação é verdadeiramente crítica em _todo_ prompt versus o que pode ficar no contexto warm (Layer 4-5) e ser carregado apenas quando relevante.
+
+---
+
+## maes explain retorna "synthesis não encontrado"
+
+**Causa:** `maes sync` nunca foi executado no repositório, ou o diretório `synthesis/` foi deletado.
+
+**Fix:**
+
+```bash
+# Regenerar completamente
+maes sync
+
+# Confirmar que synthesis/ foi criado
+ls .maes/synthesis/
+```
+
+Se `.maes/synthesis/` não existe no repositório mas deveria (porque outros no time usam MAES), verifique se o `.gitignore` está excluindo o diretório por engano. Os arquivos de `synthesis/` devem ser commitados.
+
+---
+
+## Logs e Debug
+
+Para qualquer problema não coberto acima, use as flags de diagnóstico:
+
+```bash
+# Output detalhado do pipeline inteiro
+maes sync --verbose
+
+# Saúde completa do sistema
+maes doctor
+
+# Ver o que cada guard cobre
+maes explain guard --path "src/**"
+
+# Estado geral da synthesis
+maes explain status
+```
+
+O output de `--verbose` mostra o que acontece em cada estágio do pipeline (INGEST, NORMALIZE, DEDUPLICATE, LAYER, CONFLICT, COMPILE, ADAPTERS), incluindo quantas assertions foram processadas e descartadas em cada etapa.
+
+## Resetar e Recomeçar
+
+Se o estado do contexto compilado estiver inconsistente ou corrompido, é seguro deletar o diretório `synthesis/` e regenerar:
+
+```bash
+# Deletar apenas o output compilado (não afeta os arquivos de contexto em human/)
+rm -rf .maes/synthesis/
+
+# Regenerar
+maes sync
+
+# Verificar
+maes doctor
+maes validate
+```
+
+Esse processo é seguro porque `synthesis/` é sempre derivado de `context/human/` e `context/inferred/` — deletá-lo não perde nenhuma informação permanente.

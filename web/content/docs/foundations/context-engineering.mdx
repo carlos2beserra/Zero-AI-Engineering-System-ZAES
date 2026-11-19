@@ -1,0 +1,76 @@
+---
+title: O que é Context Engineering
+description: A disciplina de capturar, versionar e governar o contexto humano que AI coding agents precisam para escrever código organizacionalmente correto.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+**Context Engineering** é a disciplina de **capturar, versionar e governar
+o contexto humano** que AI coding agents precisam para escrever código
+não apenas tecnicamente correto, mas **organizacionalmente correto**.
+
+## A definição curta
+
+> Context Engineering trata o contexto de IA como **código** — versionado,
+> revisado em PR, com dono, com gates de CI, e com pipeline de build
+> reprodutível.
+
+## Por que é uma disciplina nova
+
+| Era                 | Foco             | Limite                                  |
+| ------------------- | ---------------- | --------------------------------------- |
+| Prompt engineering  | A frase certa    | Local, não escala, não viaja com o repo |
+| RAG / embeddings    | Recall do código | Não ensina decisão, contrato, restrição |
+| Context Engineering | Contexto humano  | Foco: o que o código **não diz**        |
+
+Prompt engineering otimiza **uma conversa**. RAG indexa **o que já existe**.
+Context Engineering captura **o que o time decidiu** — e o mantém vivo.
+
+## Os três artefatos centrais
+
+1. **Conhecimento humano explícito** (`.maes/context/human/`)
+   - Decisões arquiteturais (ADRs)
+   - Compliance e segurança
+   - Contratos com terceiros
+   - Padrões do time
+
+2. **Conhecimento detectado automaticamente** (`.maes/context/inferred/`)
+   - Stack, dependências, módulos
+   - Convenções de teste e estrutura
+   - Regenerado a cada `maes sync`
+
+3. **Governança operacional**
+   - `OWNERSHIP.yaml` — dono por arquivo
+   - Staleness — prazo de revisão
+   - CI gates — bloqueio quando crítico
+
+## O que Context Engineering **não é**
+
+- ❌ Escrever um `CLAUDE.md` gigante e esquecer.
+- ❌ Despejar todo o README no prompt.
+- ❌ Embeddings do código sem curadoria humana.
+- ❌ Documentação para humanos lerem (essa é outra disciplina).
+
+## Como o MAES implementa
+
+MAES é uma plataforma **opinada** de Context Engineering com seis camadas
+([ver arquitetura](/docs/architecture/overview)):
+
+- Context Layer organiza `human/` + `inferred/`.
+- Compiler Layer compila tudo de forma determinística.
+- Documentation Layer gera adapters por cliente.
+- MCP Layer entrega sob demanda.
+- Agent Layer expõe slash commands para curadoria.
+- Governance Layer mantém o sistema vivo.
+
+<Callout type="info">
+  Context Engineering é a **categoria**. MAES é uma implementação dela. Você
+  pode fazer Context Engineering manualmente — mas vai reinventar todas as
+  camadas.
+</Callout>
+
+## Próximos passos
+
+- [Por que MAES existe](/docs/foundations/why-maes-exists)
+- [Agent Engineering](/docs/foundations/agent-engineering)
+- [As 6 camadas](/docs/architecture/overview)

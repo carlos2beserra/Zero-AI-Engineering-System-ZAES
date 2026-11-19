@@ -1,0 +1,172 @@
+---
+title: Setup MCP por cliente
+description: Como provisionar o servidor maes (MCP) em Claude Code, VS Code/Copilot, Cursor, Continue, Windsurf e Claude Desktop.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+O servidor MCP do MAES é iniciado por `maes serve` (transporte stdio). Para
+escrever as configurações em todos os clientes suportados de uma vez:
+
+```bash
+maes serve --write-mcp-config
+```
+
+Sem argumento, o comando provisiona **todos os clientes de projeto** que o MAES
+suporta (Claude Code, VS Code/Copilot, Cursor, Continue) e o Windsurf (global).
+Você também pode passar um alvo específico — veja
+[`maes serve`](/docs/cli/reference) para a lista completa.
+
+<Callout type="info">
+  Pré-requisito: `maes` precisa estar no PATH (o instalador cuida disso). Os
+  configs de **projeto** usam o comando `maes` e deixam o servidor descobrir o
+  `.maes/` pelo diretório de trabalho — sem caminhos absolutos, então são
+  portáveis e podem ser versionados. Os configs **globais** (Windsurf, Claude
+  Desktop) fixam `--project-dir` porque não têm um cwd de projeto.
+</Callout>
+
+## Claude Code
+
+Configuração em `.mcp.json` na **raiz do repositório** (Claude Code lê servidores
+de projeto daqui — não de `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+`maes serve --write-mcp-config claude-code` também pré-aprova o servidor em
+`.claude/settings.local.json` (`enabledMcpjsonServers`), para o Claude Code subir
+o servidor no reload sem prompt manual.
+
+<Callout type="info">
+  `.mcp.json` é portável e **deve ser versionado** (todo o time herda o MCP). Já
+  o `.claude/settings.local.json` é uma preferência pessoal e fica no
+  `.gitignore` (o `maes init`/`upgrade` adiciona a entrada automaticamente).
+</Callout>
+
+Recarregue a janela do editor e use `/mcp` dentro do Claude Code para listar os
+servidores ativos.
+
+## VS Code / GitHub Copilot
+
+VS Code lê MCP de `.vscode/mcp.json` (chave `servers`); o GitHub Copilot em
+**agent mode** consome o mesmo arquivo:
+
+```json
+{
+  "servers": {
+    "maes-meu-projeto": {
+      "type": "stdio",
+      "command": "maes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+`maes serve --write-mcp-config copilot` é um alias de `vscode` (escreve o mesmo
+arquivo).
+
+## Cursor
+
+Configuração de projeto em `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Habilite em **Settings → MCP** dentro do Cursor. Para configurar globalmente
+(`~/.cursor/mcp.json`, afeta todos os projetos), use o alvo `cursor`.
+
+## Continue
+
+Configuração em `.continue/config.yaml` (lista `mcpServers`):
+
+```yaml
+mcpServers:
+  - name: maes-meu-projeto
+    command: maes
+    args:
+      - serve
+```
+
+O `--write-mcp-config continue` preserva as demais chaves do `config.yaml`.
+
+## Windsurf
+
+Windsurf só tem config global em `~/.codeium/windsurf/mcp_config.json`. Como esse
+arquivo serve vários projetos e não tem cwd de projeto, a entrada fixa
+`--project-dir`:
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["--project-dir", "/caminho/absoluto/do/repo", "serve"]
+    }
+  }
+}
+```
+
+Reinicie o Windsurf (ou atualize o painel MCP do Cascade).
+
+## Claude Desktop
+
+Configuração global em `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+ou `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS).
+Como é global, também fixa `--project-dir`:
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["--project-dir", "/caminho/absoluto/do/repo", "serve"]
+    }
+  }
+}
+```
+
+Use `maes serve --write-mcp-config claude-desktop` e reinicie o Claude Desktop.
+
+## Verificando que funciona
+
+O servidor expõe estas **tools** MCP:
+
+- `maes_get_agent_context` — contexto compilado (hot + warm) para um agente/tarefa
+- `maes_check_guard` — verifica se uma ação em um path é permitida/bloqueada
+- `maes_list_agents` — lista os agentes disponíveis
+- `maes_who_depends_on` — consulta o grafo de impacto (marcado como experimental)
+
+Em qualquer cliente com MCP ativo, peça:
+
+> Liste os agentes via a tool `maes_list_agents`.
+
+Para depurar fora do editor, rode o servidor manualmente a partir da raiz do
+repo (ele encontra o `.maes/` pelo cwd):
+
+```bash
+maes serve
+```
+
+## Próximos passos
+
+- [O que é MCP](/docs/mcp/what-is-mcp)
+- [Por que MCP importa](/docs/mcp/why-mcp-matters)
+- [Referência do `maes serve`](/docs/cli/reference)
+- [As camadas do MAES](/docs/architecture/overview)

@@ -1,0 +1,65 @@
+---
+title: MCP Layer
+description: O servidor Model Context Protocol que entrega contexto sob demanda — sem inflar o prompt inicial.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+A **MCP Layer** é a interface **sob demanda** entre o contexto compilado e
+qualquer cliente compatível com Model Context Protocol. Enquanto a
+[Documentation Layer](/docs/architecture/documentation-layer) carrega o
+essencial **no início** da sessão, a MCP Layer entrega o **resto** quando o
+agent pede.
+
+## Por que é uma camada à parte
+
+Sem MCP Layer, você tem duas opções ruins:
+
+1. **Despejar tudo no prompt inicial** — estoura janela de contexto, paga
+   tokens caros, mistura sinal com ruído.
+2. **Carregar pouco** — agent perde detalhes importantes (decisões antigas,
+   contratos de módulos específicos).
+
+Com MCP, o agent **negocia**: pede o que precisa, quando precisa.
+
+## O que o MAES expõe via MCP
+
+O servidor `maes serve` lê a síntese em `.maes/synthesis/` e expõe **tools** MCP:
+
+- `maes_get_agent_context` — contexto compilado (hot + warm) para um agente/tarefa.
+- `maes_check_guard` — verifica se uma ação em um path é permitida/bloqueada.
+- `maes_list_agents` — lista os agentes disponíveis.
+- `maes_who_depends_on` — consulta o grafo de impacto (marcado como experimental).
+
+Ver [Setup MCP por cliente](/docs/mcp/setup-per-client) para configurar.
+
+## Como se conecta com Documentation Layer
+
+```
+Sessão começa
+    ↓
+Cliente carrega adapter da Documentation Layer
+(CLAUDE.md / .cursor/rules / .windsurfrules / …)
+    ↓
+Agent tem contexto essencial
+    ↓
+Durante a sessão, agent precisa de algo específico
+    ↓
+Agent consulta MCP Server (maes serve)
+    ↓
+MCP lê arquivo de human/ ou inferred/ e retorna
+    ↓
+Agent responde com contexto preciso
+```
+
+<Callout type="info">
+  Em monorepos e contextos multi-squad, MCP deixa de ser otimização e vira
+  **requisito** — a janela de contexto não comporta dump completo.
+</Callout>
+
+## Próximos passos
+
+- [O que é MCP](/docs/mcp/what-is-mcp)
+- [Por que MCP importa](/docs/mcp/why-mcp-matters)
+- [MCP e MAES — relação](/docs/mcp/mcp-and-maes)
+- [As 6 camadas](/docs/architecture/overview)

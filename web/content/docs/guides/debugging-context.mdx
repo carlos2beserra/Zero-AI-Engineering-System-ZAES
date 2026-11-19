@@ -1,0 +1,195 @@
+---
+title: Auditando Decisões do Compilador
+description: Como usar maes explain para entender o que está no contexto compilado, por que uma assertion foi incluída ou excluída, e como debugar comportamentos inesperados da IA.
+---
+
+Quando a IA não respeita uma regra que você adicionou — ou quando você quer saber exatamente o que ela vai receber antes de abrir uma sessão — o `maes explain` é a ferramenta certa.
+
+## Visão Geral do Contexto Compilado
+
+```bash
+maes explain status
+```
+
+Retorna um resumo completo do estado da compilação:
+
+```
+Assertions compiladas: 52
+  Layer 1 (Compliance):   8  — hot context
+  Layer 2 (Security):     4  — hot context
+  Layer 3 (Contracts):    6  — hot context
+  Layer 4 (Architecture): 12 — warm context
+  Layer 5 (Domain):       14 — warm context
+  Layer 6 (Engineering):  8  — warm context
+
+Hot context: 623 / 800 tokens (78%)
+Warm context: 2.840 / 4.000 tokens (71%)
+
+Conflitos: 2 (2 RESOLVED, 0 UNRESOLVED)
+Staleness: 0 assertions críticas stale
+```
+
+Se o hot context estiver perto de 800 tokens, assertions do tier quente podem estar sendo truncadas. Use `maes audit` para o relatório detalhado com score.
+
+---
+
+## Inspecionar Guards por Path
+
+Para ver quais regras protegem um caminho específico:
+
+```bash
+maes explain guard --path "src/payments/**"
+```
+
+Saída:
+
+```
+Guards ativos para 'src/payments/**':
+
+  [L1] compliance — BLOQUEADO: modificar payment_transactions.status diretamente
+       (origem: compliance.md, linha 23)
+       motivo: Estado de pagamento só pode ser alterado via Stripe webhook
+
+  [L3] contracts — REQUER APROVAÇÃO: modificar payload do webhook Stripe
+       (origem: integrations.md, linha 45)
+       motivo: Contrato ativo com formato fixo — verificar changelog da API antes
+
+  [L5] domain — AVISO: remover coluna de um modelo de pagamento
+       (origem: business-rules.md, linha 12)
+       motivo: Dados históricos de auditoria
+```
+
+Isso mostra exatamente o que o agent receberia como instrução ao trabalhar nesse path.
+
+---
+
+## Simular o Contexto de um Agent
+
+Para ver o contexto completo que um agent específico receberia em uma tarefa:
+
+```bash
+maes explain context --agent maes-review --task "refatorar o módulo de pagamentos"
+```
+
+Retorna o markdown que seria injetado no agent com:
+
+- Hot context (sempre presente)
+- Warm context relevante à tarefa (calculado por similaridade semântica com o texto da tarefa)
+- Guards ativos para os paths inferidos da tarefa
+
+Isso é especialmente útil para:
+
+- Confirmar que uma regra nova está no contexto antes de usá-la
+- Entender por que um agent tomou uma decisão inesperada
+- Verificar que o hot context não ultrapassou o budget
+
+---
+
+## Investigar um Conflito Específico
+
+Se `maes validate` reportar um conflito UNRESOLVED:
+
+```bash
+maes explain conflict --id conflict-001
+```
+
+Saída:
+
+```
+Conflito ID: conflict-001
+Status: UNRESOLVED
+
+Assertion A (Layer 3, integrations.md):
+  "Endpoint /api/orders aceita apenas JSON"
+  última verificação: 2026-04-12
+
+Assertion B (Layer 6, principles.md):
+  "Endpoints de integração devem suportar JSON e XML para compatibilidade com parceiros"
+  última verificação: 2026-03-01
+
+Conflito detectado: Layer 3 contradiz Layer 6 sobre formatos aceitos.
+Resolução manual necessária — edite um dos arquivos e rode maes sync.
+```
+
+Para resolver: edite o arquivo menos prioritário (layer maior) para alinhar com o de maior prioridade (layer menor), ou remova a assertion que não é mais válida.
+
+---
+
+## Verificar Staleness por Layer
+
+```bash
+maes explain status
+```
+
+Inclui o breakdown de staleness por layer com os scores (0.0 = recente, 1.0 = expirado):
+
+```
+Staleness por layer:
+  Layer 1 (Compliance):  score 0.12 — OK
+  Layer 2 (Security):    score 0.08 — OK
+  Layer 3 (Contracts):   score 0.71 — WARN (próximo do threshold 0.8)
+  Layer 4 (Architecture): score 0.45 — OK
+  ...
+```
+
+Se um layer estiver próximo de 0.8, revise as assertions antes que o CI comece a bloquear.
+
+---
+
+## Diagnosticar por que uma Assertion não Aparece
+
+Se você adicionou uma regra em `context/human/` mas ela não está aparecendo no contexto:
+
+**1. Verifique se o sync foi rodado**
+
+```bash
+maes sync
+```
+
+**2. Verifique se a assertion foi compilada**
+
+```bash
+# Procurar a assertion em assertions.json
+cat .maes/synthesis/assertions.json | python -m json.tool | grep -A5 "termo da assertion"
+```
+
+**3. Verifique o frontmatter do arquivo**
+
+```bash
+maes doctor   # avisa sobre frontmatter inválido
+```
+
+**4. Verifique se a assertion foi deduplicated**
+O compilador aplica Jaccard similarity — se existir uma assertion muito similar já compilada, a nova pode ter sido merged com a existente:
+
+```bash
+maes explain status   # mostra o total de assertions por layer antes e depois da deduplicação
+```
+
+**5. Verifique o budget do tier**
+Se a assertion é de layer 4–6 (warm), ela entra no contexto somente quando relevante à tarefa. Para ver se ela entraria em uma tarefa específica:
+
+```bash
+maes explain context --agent maes-review --task "texto da tarefa onde a regra deveria aparecer"
+```
+
+---
+
+## Audit Score e Diagnóstico de Qualidade
+
+```bash
+maes audit              # relatório completo salvo em .maes/audit/
+maes audit --verbose    # saída detalhada no terminal
+maes audit --verbose    # mostra todos os findings (inclusive INFO)
+```
+
+O relatório inclui:
+
+- Score 0–100 (HEALTHY ≥ 80, NEEDS_ATTENTION ≥ 60, CRITICAL < 60)
+- Saturation do hot context
+- % de assertions stale por layer
+- Density de assertions por domínio
+- Guards com paths muito amplos (wildcards `**` sem escopo)
+- Arquivos `context/human/` com placeholders não preenchidos
+
+Use `maes audit` semanalmente ou antes de onboarding de um novo dev no time.

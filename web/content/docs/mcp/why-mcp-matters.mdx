@@ -1,0 +1,66 @@
+---
+title: Por que MCP importa
+description: O problema da janela de contexto, custo de tokens e como MCP transforma a economia do AI coding.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+## O problema invisível: prompt inicial gigante
+
+Sem MCP, todo cliente de IA que quer "entender o projeto" cai numa armadilha:
+**carregar tudo no prompt inicial**.
+
+```text
+CLAUDE.md (50KB)
++ .cursor/rules/*.mdc (30KB)
++ histórico do chat (variável)
++ código que você cola (variável)
+─────────────────────────────────
+Prompt inicial: 100KB+ por sessão
+```
+
+Consequências:
+
+- **Janela de contexto saturada** antes mesmo de você escrever o primeiro
+  prompt.
+- **Custo por token** alto — você paga pelo dump inteiro a cada turno.
+- **Latência maior** — modelos lentos com inputs grandes.
+- **Sinal/ruído ruim** — modelo dilui atenção em informações irrelevantes
+  para a tarefa atual.
+
+## Como MCP resolve
+
+Com um servidor MCP no meio, o agent **negocia o contexto** em vez de
+recebê-lo de bandeja:
+
+- Carrega só o adapter mínimo (princípios + sumário) no início.
+- Consulta o servidor MCP **quando precisa** — "me dê `decisions.md`",
+  "me dê o contrato do módulo X".
+- Tokens caros são gastos apenas no que importa para a tarefa.
+
+| Sem MCP                          | Com MCP                                   |
+| -------------------------------- | ----------------------------------------- |
+| 100KB no prompt inicial          | 5KB no prompt inicial + sob demanda       |
+| Paga tudo a cada turno           | Paga só o que o agent pede                |
+| Sem audit trail do que foi usado | Servidor pode logar cada `read_resource`  |
+| Acoplado ao cliente              | Mesmo MCP serve Claude, Cursor, Continue… |
+
+## MAES + MCP = Context Engineering escalável
+
+A Documentation Layer do MAES gera adapters **enxutos** — apenas o que todo
+agent precisa saber sempre. O resto (decisões específicas, contratos por
+módulo, runbooks operacionais) fica disponível **via MCP** para consulta
+direcionada.
+
+Resultado: você pode ter **megabytes** de contexto humano versionado no repo
+sem inflar prompts.
+
+<Callout type="info">
+  Em monorepos e contextos multi-squad isso deixa de ser otimização e passa a
+  ser **requisito** — sem MCP, a janela de contexto não comporta.
+</Callout>
+
+## Próximos passos
+
+- [O que é MCP](/docs/mcp/what-is-mcp)
+- [Setup por cliente](/docs/mcp/setup-per-client)

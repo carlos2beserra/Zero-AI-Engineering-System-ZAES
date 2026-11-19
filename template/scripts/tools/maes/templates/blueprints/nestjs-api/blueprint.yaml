@@ -1,0 +1,21 @@
+# MAES Blueprint — contrato determinístico (metadata).
+# Não contém lógica de decisão, matching, intent ou execução.
+# A execução vive em bootstrap/bootstrap.yaml; o contexto operacional em prompt.md.
+
+id: nestjs-api
+name: "NestJS API Corporativa"
+type: backend-api
+version: 1.0.0
+
+summary: |
+  - NestJS / TypeScript
+  - Prisma / PostgreSQL
+  - Zod / Jest
+  - Docker / pnpm
+
+stack:
+  languages: [TypeScript]
+  frameworks: [NestJS]
+  package_manager: pnpm
+
+seed_human: true

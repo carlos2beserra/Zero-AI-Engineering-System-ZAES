@@ -1,0 +1,229 @@
+---
+title: "Capabilities do MAES CLI"
+description: "Matrix completa de capabilities do MAES — o que está implementado, o que requer configuração e o que requer API key."
+---
+
+## Legenda de Status
+
+| Símbolo | Significado                |
+| ------- | -------------------------- |
+| ✅      | Implementado e estável     |
+| ⚙️      | Requer configuração manual |
+| 🔑      | Requer API key de LLM      |
+| 🔒      | Bloqueante para CI         |
+
+---
+
+## Matrix de Capabilities
+
+| Capability                                              | Status | Comando / Arquivo                                               |
+| ------------------------------------------------------- | ------ | --------------------------------------------------------------- |
+| Scaffold do projeto + instalação de agentes externos    | ✅     | `maes init`                                                     |
+| Migração de docs/adapters existentes para human context | ✅     | `/maes-context-add` (agente externo)                         |
+| Análise automática de codebase (LLM)                    | ✅     | `/maes-analyze` (agente externo, usa provider do cliente de IA) |
+| Git co-change analysis (zero LLM)                       | ✅     | `/maes-analyze` (módulo determinístico)                         |
+| Static import / layer violation detection (zero LLM)    | ✅     | `/maes-analyze` (módulo determinístico)                         |
+| Enrichment de code examples em ai_likely_mistakes       | ✅     | `/maes-analyze` (passagem opcional)                             |
+| Compilação de contexto                                  | ✅     | `maes sync`                                                     |
+| Detecção de conflitos entre assertions                  | ✅     | `maes sync` (automático)                                        |
+| CI gate (staleness + conflitos)                         | ✅ 🔒  | `maes validate`                                                 |
+| Auditoria determinística (score 0–100)                  | ✅     | `maes audit`                                                    |
+| Geração de CLAUDE.md                                    | ✅     | `maes sync`                                                     |
+| Geração de .cursor/rules/                               | ✅     | `maes sync`                                                     |
+| Geração de copilot-instructions.md                      | ✅     | `maes sync`                                                     |
+| Geração de .windsurfrules                               | ✅     | `maes sync`                                                     |
+| Geração de .continue/rules/                             | ✅     | `maes sync`                                                     |
+| MCP server                                              | ✅     | `maes serve`                                                    |
+| Extração automática de regras de texto/arquivo          | ✅     | `/maes-context-add` (agente externo)                         |
+| LLM-as-judge evals (cenários, WITH/WITHOUT)             | ✅     | agent `/maes-eval` (usa o LLM do cliente)                       |
+| LLM-as-judge eval de PR (CI, rubric)                    | ✅ 🔑  | `eval-pr.py` via workflow `maes-eval.yml`                       |
+| Health check do projeto                                 | ✅     | `maes doctor`                                                   |
+| Auditoria do compilador (guards, conflitos, contexto)   | ✅     | `maes explain`                                                  |
+| Staleness tracking por assertion                        | ✅     | automático em `maes sync`                                       |
+| Ownership por layer                                     | ⚙️     | `OWNERSHIP.yaml`                                                |
+| GitHub Actions CI (8 workflows)                         | ⚙️     | `template/.github/workflows/`                                   |
+| Multi-provider LLM (Anthropic, OpenAI, GitHub, Gemini)  | ✅     | variáveis de ambiente (apenas para o eval de CI `eval-pr.py`)   |
+
+---
+
+## Comandos CLI — Referência Completa
+
+### Setup e Inicialização
+
+**`maes init`** — Cria a estrutura `.maes/` com arquivos template e **instala os agentes externos** (`/maes-analyze`, `/maes-context-add`) em cada cliente de IA detectado (Claude Code, Cursor, Copilot, Windsurf, Continue). Ponto de entrada para projetos novos.
+
+```bash
+maes init [--project-dir PATH]
+```
+
+Depois rode `/maes-analyze` dentro do seu cliente de IA para popular `context/inferred/` e em seguida `maes sync` para compilar os adapters.
+
+**`maes doctor`** — Verifica a saúde do setup MAES: presença dos arquivos obrigatórios, validade do `config.yaml`, integridade do diretório `synthesis/`. SDKs de LLM e API keys são opcionais (só o eval de CI `eval-pr.py` precisa deles).
+
+```bash
+maes doctor [--project-dir PATH]
+```
+
+---
+
+### Compilação e Validação
+
+**`maes sync`** — Executa o compiler pipeline completo: INGEST → NORMALIZE → DEDUPLICATE → LAYER → CONFLICT → COMPILE → ADAPTERS. Regenera `synthesis/` e todos os arquivos de adapter. Deve ser executado após qualquer edição em `context/human/` ou após rodar os agentes externos.
+
+```bash
+maes sync [--verbose] [--project-dir PATH]
+```
+
+**`maes validate`** — Verifica se o contexto compilado está dentro dos thresholds de staleness e se não há conflitos UNRESOLVED. Retorna exit code 1 se houver falha — use em CI como gate de qualidade.
+
+```bash
+maes validate [--project-dir PATH]
+```
+
+**`maes audit`** — Auditoria determinística do contexto compilado: roda heurísticas sobre `synthesis/` e gera relatório com score 0–100 e grade (HEALTHY / NEEDS_ATTENTION / CRITICAL). Sem chamada LLM.
+
+```bash
+maes audit [--verbose] [--format text|json|both] [--fail-on-warning]
+```
+
+---
+
+### Análise e Enriquecimento de Contexto (agentes externos)
+
+A análise por LLM do codebase e a extração de regras rodam em **agentes externos** instalados por `maes init` no seu cliente de IA — usando o provider que o próprio cliente já tem configurado. Não exigem nenhuma variável de ambiente do MAES.
+
+**`/maes-analyze`** — Analisa o codebase e gera o diretório `inferred/`. Combina análise LLM com dois módulos determinísticos:
+
+- **LLM** — produz gaps (`ai_likely_mistakes`, `behavior_contracts`), padrões recorrentes, modelo de dados inferido, stack detectada e mapa de módulos.
+- **Git history analysis** — detecta co-change entre arquivos e áreas de alta volatilidade nos últimos 90 dias.
+- **Static import analysis** — detecta violações de layer via Python AST e regex TypeScript.
+
+Invoque dentro do cliente de IA:
+
+```
+/maes-analyze
+```
+
+**`/maes-context-add`** — Extrai regras e conhecimento de texto livre, arquivos ou docs existentes (incluindo CLAUDE.md legado, ADRs, RFCs) e roteia para o arquivo `human/*.md` correto, com dedup semântico contra assertions existentes.
+
+```
+/maes-context-add
+```
+
+Depois que qualquer agente terminar, rode `maes sync` para recompilar os adapters.
+
+---
+
+### Auditoria e Diagnóstico
+
+**`maes explain status`** — Exibe um painel com o estado atual do contexto compilado: staleness por layer, conflitos pendentes e adapters gerados.
+
+```bash
+maes explain status [--project-dir PATH]
+```
+
+**`maes explain guard`** — Explica um guard específico: qual assertion o originou, quais paths cobre, qual o tipo (enforcement ou contextual) e por que foi gerado.
+
+```bash
+maes explain guard --path GLOB [--project-dir PATH]
+```
+
+**`maes explain conflict`** — Mostra os detalhes de um conflito UNRESOLVED: quais assertions conflitam, de quais layers e arquivos de origem, e sugestões para resolução.
+
+```bash
+maes explain conflict --id ID [--project-dir PATH]
+```
+
+**`maes explain context`** — Gera uma explicação do contexto que seria injetado para um agente e uma task específicos, mostrando quais assertions entram no hot e warm context.
+
+```bash
+maes explain context --agent ID [--task T] [--project-dir PATH]
+```
+
+---
+
+### Evals e MCP
+
+**Eval por cenários** — Não é um comando CLI, e sim o agent `/maes-eval`, invocado no cliente de IA. Roda cada cenário com e sem contexto MAES, compara as respostas e calcula o delta de qualidade. Pass threshold: 70% dos cenários com delta positivo. Usa o LLM do próprio cliente — **sem API key**.
+
+```text
+/maes-eval [--scenario ID] [--agent ID]
+```
+
+**Eval de PR em CI** — O script `eval-pr.py` (workflow `maes-eval.yml`) avalia o diff de um PR contra o rubric de `.maes/evals/eval-rules.md`, retornando score 0–14. **Requer API key.** Sempre advisory na V1 — nunca bloqueia merge.
+
+**`maes serve`** — Inicia o MCP Server, expondo o contexto MAES via Model Context Protocol. Compatível com Claude Desktop, Cursor e qualquer cliente MCP. Bloqueia o terminal — execute em background ou como serviço.
+
+```bash
+maes serve [--project-dir PATH]
+```
+
+---
+
+## Providers de LLM Suportados (apenas para o eval de CI)
+
+O eval de CI (`eval-pr.py`) suporta múltiplos providers via variáveis de ambiente. O agent `/maes-eval` e os agentes externos (`/maes-analyze`, `/maes-context-add`) usam o provider do próprio cliente de IA e não precisam dessas variáveis.
+
+| Provider           | Variável            | Qualidade | Custo                |
+| ------------------ | ------------------- | --------- | -------------------- |
+| Anthropic (padrão) | `ANTHROPIC_API_KEY` | Melhor    | Pago por token       |
+| OpenAI / ChatGPT   | `OPENAI_API_KEY`    | Ótima     | Pago por token       |
+| GitHub Models      | `GITHUB_TOKEN`      | Boa       | Gratuito com Copilot |
+| Google Gemini      | `GEMINI_API_KEY`    | Boa       | Pago / free tier     |
+
+Para selecionar o provider explicitamente:
+
+```bash
+export MAES_PROVIDER=github
+export GITHUB_TOKEN=ghp_...
+python scripts/ci/eval-pr.py --stdin
+```
+
+Para override de modelo:
+
+```bash
+export MAES_AGENT_MODEL=claude-opus-4-7
+maes sync
+```
+
+---
+
+## Adapters Gerados por maes sync
+
+Após `maes sync`, o compilador gera automaticamente os adapters para cada ferramenta de IA configurada em `config.yaml`:
+
+| Adapter  | Arquivo gerado                    | Ferramenta     |
+| -------- | --------------------------------- | -------------- |
+| Claude   | `CLAUDE.md`                       | Claude Code    |
+| Cursor   | `.cursor/rules/maes.mdc`          | Cursor         |
+| Copilot  | `.github/copilot-instructions.md` | GitHub Copilot |
+| Windsurf | `.windsurfrules`                  | Windsurf       |
+
+Os adapters contêm o hot context compilado (layers 1-3, máximo 800 tokens) e referências para carregamento do warm context (layers 4-6, máximo 4000 tokens). Configure quais adapters gerar em `config.yaml`:
+
+```yaml
+adapters:
+  claude: true
+  cursor: true
+  copilot: true
+  windsurf: false
+```
+
+---
+
+## O que o MAES É
+
+- **Context Compiler** — transforma contexto organizacional em instruções para IA
+- **Sistema de governança** — staleness tracking, guards, detecção de conflitos
+- **Pipeline de automação CI** — 9 GitHub Actions workflows para validação e rastreabilidade
+- **Infraestrutura** — a base sobre a qual cada time constrói seu workflow com IA
+
+## O que o MAES Não É
+
+| Não é                             | Motivo                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| Um LLM ou agente autônomo         | Não executa código, não toma decisões dinâmicas                           |
+| Um framework de código            | Gera contexto que guia a IA, não código de produção                       |
+| Um CI/CD completo                 | Complementa GitHub Actions, não substitui                                 |
+| Um sistema de memória persistente | Injeta contexto compilado a cada sessão — não usa embeddings ou vector DB |
+| Um gerador de documentação        | Gera instruções para IA, não docs para humanos                            |

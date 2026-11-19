@@ -1,0 +1,14 @@
+{
+  "title": "Guias Práticos",
+  "pages": [
+    "using-agents",
+    "ci-setup",
+    "onboarding",
+    "keeping-context-fresh",
+    "debugging-context",
+    "migrating-from-claude-md",
+    "decision-records",
+    "troubleshooting",
+    "templates"
+  ]
+}

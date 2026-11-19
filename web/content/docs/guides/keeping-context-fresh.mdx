@@ -1,0 +1,168 @@
+---
+title: "Mantendo o Contexto Atualizado"
+description: "Quando invocar o agente /maes-analyze, quando usar /maes-context-add, o que cada um sobrescreve — e como manter o contexto sincronizado com o código."
+---
+
+## O que pode ficar desatualizado
+
+O MAES tem dois tipos de contexto com ciclos de vida completamente diferentes:
+
+| Diretório           | Quem escreve                                           | O que contém                                                     | Fica stale quando                         |
+| ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------- | ----------------------------------------- |
+| `context/inferred/` | Agente externo `/maes-analyze`                         | Stack, módulos, gaps, padrões detectados no código               | O codebase cresce ou muda estruturalmente |
+| `context/human/`    | Agente externo `/maes-context-add` ou edição manual | Regras de negócio, decisões arquiteturais, contratos, princípios | Ninguém registra decisões novas           |
+
+Eles não concorrem — o agente `/maes-analyze` **nunca toca `context/human/`**. Você nunca vai perder o que escreveu via `/maes-context-add` rodando o analyze.
+
+Ambos os agentes são instalados por `maes init` e não requerem variáveis de ambiente do MAES.
+
+---
+
+## `/maes-analyze` — quando invocar
+
+Invoque o agente quando o codebase muda estruturalmente — quando a IA, lendo só o código, passaria a ter uma imagem desatualizada do projeto:
+
+| Situação                                                    | Por quê atualizar                                       |
+| ----------------------------------------------------------- | ------------------------------------------------------- |
+| Novos módulos ou pacotes adicionados                        | O campo `modules` de `inferred/` fica desatualizado     |
+| Migração de stack (trocar ORM, framework, banco)            | `stack.json` e `patterns.json` ficam desatualizados     |
+| Refatoração grande que muda a arquitetura de pastas         | A detecção de domínios e responsabilidades muda         |
+| Adição de novos agentes ou mudança de escopo dos existentes | O agente detecta quais módulos são relevantes por agent |
+| Primeira instalação após `maes init`                        | `inferred/` está vazio sem o analyze                    |
+
+Você não precisa invocar o agente a cada commit. Um ciclo de semanas ou por milestone é suficiente para a maioria dos projetos.
+
+Invoque o slash command `/maes-analyze`. O agente vai ler o código, popular `.maes/context/inferred/` e você então roda:
+
+```bash
+maes sync
+git add .maes/context/inferred/ .maes/synthesis/
+git commit -m "chore(context): refresh inferred context"
+```
+
+<Callout type="warning">
+  O agente `/maes-analyze` consome tokens do provider de LLM. Por isso o MAES
+  não o invoca automaticamente no CI — apenas `maes sync` e `maes validate` (que
+  são determinísticos e não usam LLM) são adequados para pipelines de CI.
+</Callout>
+
+---
+
+## `/maes-context-add` — quando usar
+
+Use o agente `/maes-context-add` (ou edição direta dos arquivos em `.maes/context/human/`) para capturar o que o LLM **não consegue inferir só lendo o código**: o _por quê_ das decisões, as regras que existem na cabeça das pessoas, os contratos implícitos com sistemas externos.
+
+| O que capturar                                                   | Como capturar                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------ |
+| Invariante de processo ("migrations nunca tocam context/human/") | Invocar `/maes-context-add` passando o texto  |
+| Decisão arquitetural com alternativas rejeitadas                 | Editar `decisions.md` direto ou via agente       |
+| Regra descoberta no code review                                  | Invocar `/maes-context-add` na hora           |
+| Documentação existente de parceiro ou API                        | Apontar o agente para `docs/api-parceiro.md`     |
+| Decisão tomada em reunião / Slack                                | Invocar `/maes-context-add` antes de esquecer |
+
+O código diz _o que_ o sistema faz. O MAES diz _por que_ ele faz assim e _o que não pode mudar_.
+
+---
+
+## Fluxo recomendado após mudanças significativas no código
+
+```
+Mudança estrutural no codebase (novos módulos, refatoração de domínio)
+    │
+    ▼
+/maes-analyze         → atualiza context/inferred/
+    │
+    ▼
+/maes-context-add  → registra decisões novas que surgiram no processo
+    │
+    ▼
+maes sync             → recompila assertions + gera adapters
+    │
+    ▼
+maes validate         → garante que layers 1–3 estão consistentes
+    │
+    ▼
+git add .maes/ && git commit
+```
+
+---
+
+## Sem automação: o que fazer manualmente
+
+Se o seu projeto ainda não tem GitHub Actions configuradas para o MAES, estabeleça um ritual manual:
+
+### Por commit/PR (rápido)
+
+```bash
+# Após qualquer mudança em context/human/
+maes sync && maes validate
+```
+
+### Por milestone ou sprint
+
+1. Invoque `/maes-analyze` no seu cliente de IA para atualizar `context/inferred/`.
+2. Se surgiram novas decisões, invoque `/maes-context-add` (ou edite os arquivos `human/*.md` direto).
+3. Recompile e valide:
+
+```bash
+maes sync && maes validate
+```
+
+### Após instalar uma versão nova do CLI
+
+```bash
+maes version        # verifica se há upgrade disponível
+maes upgrade        # migra o .maes/ se necessário
+maes sync           # (já incluído no upgrade, mas seguro rodar novamente)
+```
+
+<Callout type="info">
+  Para configurar GitHub Actions que automatizam `maes validate` no CI e
+  disparam alertas de staleness, veja [Configurando CI](/docs/guides/ci-setup).
+</Callout>
+
+---
+
+## Usando hooks do Claude Code para lembrar
+
+Se você usa o Claude Code, pode configurar um hook que executa `maes sync` automaticamente depois de uma sessão de trabalho — sem precisar lembrar de rodar manualmente.
+
+No seu `~/.claude/settings.json` (ou `.claude/settings.json` no projeto):
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "maes sync --project-dir . 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Isso roda `maes sync` toda vez que o Claude Code termina uma sessão, mantendo os adapters sempre atualizados. O `|| true` garante que uma falha no sync não afeta o fluxo de trabalho normal.
+
+<Callout type="warning">
+  Hooks que invocam `/maes-analyze` devem ser usados com cuidado — o agente
+  consome tokens do cliente de IA e não deve rodar a cada commit ou sessão.
+  Reserve-o para os momentos de milestone descritos acima.
+</Callout>
+
+---
+
+## Como saber se o contexto está stale
+
+```bash
+maes explain status          # visão geral do estado das assertions
+maes audit                   # relatório detalhado com scores de staleness
+maes validate                # falha com exit 1 se layers 1–3 estão critically stale
+```
+
+O score de staleness de cada assertion é calculado com base no TTL configurado para o layer — layers críticos (1–3) têm TTL de 30 a 365 dias. Assertions com score ≥ 0.8 em layers 1–3 bloqueiam o CI.

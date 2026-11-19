@@ -1,0 +1,284 @@
+---
+title: "Usando os Agents"
+description: "Como usar os agents do MAES no dia a dia — slash commands no Claude Code, contexto no Cursor, Copilot e Windsurf."
+---
+
+Depois de rodar `maes init`, você tem agents configurados para o projeto. Esta página explica como invocá-los em cada ferramenta e o que o MCP Server adiciona à experiência.
+
+---
+
+## Claude Code — a experiência mais completa
+
+O Claude Code é onde os agents funcionam melhor. O MAES gera um slash command para cada agent em `.claude/commands/`. Basta digitar `/` no chat para ver os disponíveis.
+
+### Agents core
+
+Estes agents são instalados automaticamente por `maes init` em todos os projetos:
+
+| ID                  | Invocação            | O que faz                                                                                       |
+| ------------------- | -------------------- | ----------------------------------------------------------------------------------------------- |
+| `maes-review`       | `/maes-review`       | Revisão consultiva do diff da branch atual contra o contexto compilado — emite um Scorecard      |
+| `maes-analyze`      | `/maes-analyze`      | Analisa o projeto e propõe assertions/guards a partir do código existente                       |
+| `maes-context-add`  | `/maes-context-add`  | Captura uma nova regra ou decisão e a grava no contexto humano                                  |
+| `maes-eval`         | `/maes-eval`         | Avalia a qualidade do contexto compilado para um agent e uma tarefa                             |
+
+A revisão é o caso de uso mais comum no dia a dia:
+
+```
+/maes-review
+```
+
+O `/maes-review` revisa o diff da branch atual contra o contexto compilado do MAES (assertions, guards, ownership) e emite um **MAES Review Scorecard**. As preocupações de segurança e de migração entram como heurísticas dessa revisão. Ele é **consultivo**: aponta riscos e desvios, mas nunca bloqueia, aprova ou faz gate de nada — a decisão é sempre do time. O conhecimento de domínio chega pelo contexto compilado (CLAUDE.md, MCP), não por personas especializadas.
+
+### Agents opcionais — catálogo
+
+Além dos agents core, o MAES mantém um catálogo de agents opcionais que podem ser ativados por projeto. Eles não são instalados por padrão — cada equipe decide quais fazem sentido para o contexto daquele projeto.
+
+```bash
+maes agent list              # ver o catálogo e o status de cada agent
+maes agent add dev-workflow  # ativar um agent opcional
+```
+
+**Agent disponível no catálogo:**
+
+| ID             | Nome         | Descrição                                                                                  |
+| -------------- | ------------ | ------------------------------------------------------------------------------------------ |
+| `dev-workflow` | Dev Workflow | Fluxo completo de desenvolvimento — branch, commit, push e PR com confirmação a cada etapa |
+
+#### `/dev-workflow`
+
+O `/dev-workflow` executa o fluxo completo de publicar uma mudança: do `git status` até o PR aberto no GitHub. Ele suporta dois argumentos: `start` para iniciar uma nova branch, e `finish` para commitar, fazer push e abrir o PR.
+
+Quando invocado com `start`, o agent:
+
+1. Pergunta o tipo (`feat`, `fix`, `chore`, `hotfix`), o scope e a descrição da tarefa
+2. Verifica mudanças não commitadas antes de criar a branch
+3. Cria a branch no formato `{type}/{scope}-{descricao}` a partir de `main`
+
+Quando invocado com `finish`, o agent:
+
+1. Roda `git status` e mostra um resumo simples do que mudou
+2. Lista os arquivos modificados com `git diff --name-only` e faz staging seletivo
+3. Gera uma mensagem de commit no formato Conventional Commits em inglês
+4. Pede confirmação antes de cada passo (`git add`, `git commit`, `git push`)
+5. Abre o PR via `gh pr create` com título e body gerados automaticamente
+
+```
+/dev-workflow start
+/dev-workflow finish
+```
+
+No **GitHub Copilot**, o mesmo workflow está disponível como skill:
+
+```
+@dev-workflow start
+@dev-workflow finish
+```
+
+<Callout type="info">
+  O `/dev-workflow` nunca executa `git push` ou cria PR sem confirmação
+  explícita. Cada passo é mostrado antes de ser executado — o usuário sempre tem
+  controle. O agent também nunca usa `git add .` indiscriminadamente: lista os
+  arquivos e adiciona apenas os relevantes com staging seletivo.
+</Callout>
+
+**Para ativar no projeto:**
+
+```bash
+maes agent add dev-workflow
+```
+
+O comando copia o agent para `.maes/agents/`, roda `maes sync`, e o slash command `/dev-workflow` fica disponível imediatamente no Claude Code.
+
+**Como as regras de git chegam ao agent:**
+
+O `/dev-workflow` recebe automaticamente as regras de git do projeto via warm context. Quando o time adiciona uma nova regra — por exemplo, invocando `/maes-context-add` com "squash obrigatório antes de merge em main" — ela vai para `context/human/principles.md`, e na próxima execução de `maes sync` o agent já a recebe. Não é necessário editar o YAML do agent manualmente.
+
+---
+
+### Sem slash command
+
+Se você não usar o slash command, o Claude ainda lê o `CLAUDE.md` automaticamente e pode _sugerir_ qual agent chamar. Mas ele não assume a persona especializada — para isso, o slash command é necessário.
+
+### Ativar o MCP Server (recomendado)
+
+O MCP Server deixa o Claude buscar contexto filtrado por tarefa em tempo real, além de verificar guards automaticamente antes de executar ações sensíveis.
+
+**Configurar com um comando:**
+
+```bash
+maes serve --write-mcp-config
+```
+
+Isso escreve a configuração no `.claude/settings.json` do projeto. Depois, recarregue o Claude Code (`Ctrl+Shift+P` → `Developer: Reload Window`) e o servidor vai aparecer como conectado.
+
+**Como verificar que está funcionando:**
+
+Pergunte no chat:
+
+```
+Use a tool maes_list_agents para listar os agents do projeto
+```
+
+Se o servidor estiver ativo, o Claude vai chamar a tool e responder com a lista — não vai ler o CLAUDE.md.
+
+<Callout type="info">
+  O MCP Server funciona junto com o CLAUDE.md, não em vez dele. O CLAUDE.md
+  fornece contexto base em toda sessão; o MCP fornece contexto filtrado por
+  tarefa quando um agent é invocado.
+</Callout>
+
+---
+
+## Cursor
+
+O Cursor não tem slash commands personalizados. O MAES gera uma rule por agente em `.cursor/rules/*.mdc` (ex.: `maes-review.mdc`), anexada automaticamente quando você edita arquivos no escopo (glob) daquele agente.
+
+### Como usar
+
+Descreva a tarefa diretamente no seu prompt:
+
+```
+Implementa o endpoint POST /quotations seguindo as regras de
+engenharia do projeto. Considera as constraints de auth já definidas.
+```
+
+O Cursor já vai ter as rules do MAES carregadas — você só precisa descrever o que quer fazer.
+
+### Ativar o MCP no Cursor (opcional)
+
+Com o MCP configurado, o Cursor pode buscar contexto mais específico para a tarefa:
+
+```bash
+maes serve --write-mcp-config cursor
+```
+
+Isso cria `.cursor/mcp.json` na raiz do projeto. Após reabrir o Cursor, você pode pedir:
+
+```
+Usa maes_get_agent_context com agent_id "maes-review"
+e task "endpoint de quotations" antes de começar.
+```
+
+---
+
+## GitHub Copilot
+
+O Copilot não tem slash commands, mas suporta instruções por agente via `.github/instructions/`. O VS Code aplica automaticamente o arquivo correto conforme o glob `applyTo` do frontmatter — quando você edita um arquivo que bate o padrão, o Copilot recebe as instruções daquele agente.
+
+### Como usar
+
+Descreva a tarefa no prompt — o Copilot já vai ter as instruções carregadas:
+
+```
+Implementa o endpoint POST /quotations seguindo as regras de
+engenharia do projeto. Considera as constraints de auth já definidas.
+```
+
+O contexto global de compliance e arquitetura está sempre presente via `.github/copilot-instructions.md`. As instruções por arquivo adicionam os guards específicos conforme o arquivo que está sendo editado.
+
+Agents que definem um `workflow` (como o `dev-workflow`) também geram um `SKILL.md` em `.github/skills/`. Esses agents podem ser invocados com argumento diretamente no Copilot Chat:
+
+```
+@dev-workflow start
+@dev-workflow finish
+```
+
+Com o MCP configurado, o Copilot pode buscar contexto filtrado por tarefa e verificar guards em runtime:
+
+```bash
+maes serve --write-mcp-config
+```
+
+Isso cria `.vscode/mcp.json` na raiz do projeto. Abra o Copilot Chat no modo **Agent** e peça:
+
+```
+Usa maes_get_agent_context com agent_id "maes-review"
+e task "endpoint de quotations" antes de começar.
+```
+
+<Callout type="info">
+  Verifique se o VS Code é 1.99+ em **Help → About**. Em versões anteriores, o
+  MCP não está disponível — apenas as instruções estáticas funcionam.
+</Callout>
+
+---
+
+## Windsurf
+
+O Windsurf carrega `.windsurfrules` globalmente no Cascade — sem slash commands, sem instruções por agente, contexto sempre presente.
+
+### Como usar
+
+```
+Considerando as regras de engenharia do projeto, adiciona a coluna
+status na tabela quotations com uma migration segura.
+```
+
+O suporte a MCP no Windsurf varia conforme a versão. Se disponível, configure com `maes serve --write-mcp-config` e verifique em **Windsurf Settings → MCP**.
+
+---
+
+## Comparativo rápido
+
+|                          | Claude Code           | Cursor           | Copilot                              | Windsurf          |
+| ------------------------ | --------------------- | ---------------- | ------------------------------------ | ----------------- |
+| **Slash commands**       | `/maes-review`        | Não tem          | Não tem                              | Não tem           |
+| **Skills com workflow**  | `/dev-workflow start` | Não tem          | `@dev-workflow start` (via SKILL.md) | Não tem           |
+| **Contexto automático**  | CLAUDE.md             | `.cursor/rules/` | `copilot-instructions.md`            | `.windsurfrules`  |
+| **Agents por glob**      | `.claude/commands/`   | `.cursor/rules/` | `.github/instructions/`              | Não tem           |
+| **MCP disponível**       | Sim                   | Sim              | Sim (VS Code 1.99+)                  | Depende da versão |
+| **Guards em tempo real** | Sim (com MCP)         | Sim (com MCP)    | Sim (com MCP, VS Code 1.99+)         | Não               |
+
+---
+
+## O que o MCP faz por baixo
+
+Você não precisa chamar as tools manualmente — o Claude as chama automaticamente quando você invoca um agent. Mas é útil saber o que existe:
+
+**`maes_get_agent_context`** — o Claude chama isso ao entrar no escopo de um agent. Recebe as assertions mais relevantes para a tarefa: hot context (compliance, segurança) sempre incluído, warm context (arquitetura, domínio) filtrado por relevância.
+
+**`maes_check_guard`** — o Claude chama isso antes de executar ações sensíveis (deletar registros, alterar contratos, modificar configurações críticas). Retorna `ALLOWED`, `REQUIRES_APPROVAL` ou `BLOCKED` com a explicação da regra que originou a decisão.
+
+**`maes_list_agents`** — lista os agents disponíveis no projeto. Útil para verificar que o MCP está funcionando ou para orientar o Claude sobre quem existe.
+
+O servidor lê de `.maes/synthesis/` — os artefatos compilados por `maes sync`. Não faz chamadas a LLMs. Não precisa de API key em runtime.
+
+### `blocked_mutations` — declaração estática vs. enforcement
+
+Cada agent YAML pode incluir um campo `blocked_mutations` dentro de `guards:`:
+
+```yaml
+guards:
+  blocked_mutations:
+    - "**/migrations/*already-applied*"
+    - "**/core/auth/**"
+```
+
+Este campo é **declarativo**: o MAES renderiza a lista nos arquivos de comando gerados (`.claude/commands/`, `.github/instructions/`, etc.) e o assistente de IA é instruído a recusar modificações nesses paths. O MAES **não bloqueia essas mutações em nível de sistema** — não existe enforcement automático em runtime. O comportamento depende do modelo seguir a instrução gerada.
+
+Para personalizar por projeto, edite o `.maes/agents/<nome>.agent.yaml` e rode `maes sync`.
+
+---
+
+## Referência: iniciar o servidor manualmente
+
+O `--write-mcp-config` configura o IDE para iniciar o servidor automaticamente. Se precisar rodar manualmente para depurar:
+
+```bash
+maes serve
+```
+
+```bash
+# Windows (PowerShell) — background
+Start-Process maes -ArgumentList "serve" -WindowStyle Hidden
+
+# Linux/Mac — background
+maes serve &
+```
+
+Para verificar se o servidor está respondendo antes de configurar o IDE:
+
+```bash
+maes doctor
+```

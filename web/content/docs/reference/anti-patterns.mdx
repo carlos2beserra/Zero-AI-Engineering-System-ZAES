@@ -1,0 +1,298 @@
+---
+title: "Anti-Patterns"
+description: "Comportamentos que parecem produtivos mas geram retrabalho, bugs e dívida técnica de contexto."
+---
+
+Anti-patterns são difíceis de identificar porque parecem corretos no momento. "Aceitar o primeiro output" parece eficiente. "Jogar tudo no contexto" parece cauteloso. "Não rodar maes sync" parece detalhe burocrático.
+
+Cada um desses comportamentos tem consequências documentadas. Conhecer o anti-pattern — e entender por que ele falha — é o que permite reconhecê-lo antes de cair nele.
+
+---
+
+## Anti-Pattern 1: Vibe Coding sem Contexto Configurado
+
+**Sintoma visível:** Dev usa Claude Code ou Cursor sem ter executado `maes sync`. Os adapters gerados (CLAUDE.md, .cursor/rules/) estão ausentes ou desatualizados.
+
+**Causa raiz:** MAES não foi inicializado, ou foi inicializado mas nunca atualizado após mudanças no codebase.
+
+**O que acontece:**
+
+- A IA não conhece as regras de negócio do projeto — ela preenche lacunas com defaults genéricos
+- Código gerado não segue padrões do time (nomenclatura, estrutura, tratamento de erro)
+- Violações de regras críticas (segurança, integrações, soft delete) passam despercebidas
+- Dev passa mais tempo corrigindo código gerado do que teria levado escrever do zero
+
+**Solução:** Rode `maes init` no projeto novo (instala agentes externos e cria scaffold) e `maes sync` após qualquer mudança em `context/human/`. Confirme com `maes doctor` que os adapters estão presentes e atualizados.
+
+---
+
+## Anti-Pattern 2: Aceitar o Primeiro Output sem Revisão
+
+**Sintoma visível:** Dev envia prompt, lê o resultado rapidamente, cola no projeto e abre PR.
+
+**Causa raiz:** Confiança excessiva na IA como geradora de código correto. A IA acerta o caminho feliz mas erra sistematicamente em certas dimensões.
+
+**O que acontece:**
+
+- Edge cases não tratados chegam em produção
+- Tratamento de erro incompleto (catch vazio, erros genéricos sem tipagem)
+- Dados sensíveis em logs (senhas, tokens em mensagens de erro)
+- Bugs de segurança sutis em casos de borda
+
+**Por que a IA erra nessas dimensões:** O training data favorece o caminho feliz. Código de tratamento de erro e edge cases é proporcionalmente menos representado que código de feature.
+
+**Solução:** Self-review obrigatório após geração. Rode o agent `/maes-eval` num cenário que cubra a regra em jogo para ver explicitamente onde o contexto MAES influencia (ou não) o comportamento da IA — o relatório mostra as notas do juiz para cenários com `delta < 0`.
+
+---
+
+## Anti-Pattern 3: Context Pollution (Jogar Tudo no CLAUDE.md)
+
+**Sintoma visível:** CLAUDE.md contém centenas de linhas sem estrutura — regras de negócio, comentários de arquitetura, decisões antigas, TODO lists e referências a dependências já removidas.
+
+**Causa raiz:** Intuição de que mais informação significa melhor resultado. Sem o compilador para estruturar, tudo vai para um único arquivo.
+
+**O que acontece:**
+
+- A IA aloca atenção para informação irrelevante à task atual
+- Hot context excede 800 tokens — `maes validate` falha em CI
+- Contradições internas no CLAUDE.md fazem a IA comportar de forma imprevisível
+- O arquivo se torna impossível de manter
+
+**Solução:** Use `maes sync` para gerar o CLAUDE.md. Escreva conteúdo nos 5 arquivos `human/` com responsabilidade clara por layer. O compilador estrutura, prioriza e faz caber no budget de tokens.
+
+---
+
+## Anti-Pattern 4: Ignorar Feedback da IA sem Registrar como Decisão
+
+**Sintoma visível:** A IA sugere uma abordagem alternativa; o dev a descarta mentalmente e segue com a abordagem original — sem registrar o porquê.
+
+**Causa raiz:** A decisão é tratada como conversa, não como artefato.
+
+**O que acontece:**
+
+- Na próxima sessão, a IA propõe a mesma alternativa novamente
+- Sem o "por que descartamos isso", o time debate a mesma questão em revisões futuras
+- Decisões implícitas acumulam e nunca entram em `decisions.md`
+- A IA continua sugerindo abordagens que o time já descartou
+
+**Solução:** Toda decisão arquitetural descartada ou adotada vai para `.maes/context/human/decisions.md` como DEC-NNN. Após adicionar, execute `maes sync` para que a decisão entre no contexto compilado e pare de ser proposta novamente.
+
+---
+
+## Anti-Pattern 5: Editar synthesis/ Manualmente
+
+**Sintoma visível:** Dev edita `synthesis/assertions.json`, `synthesis/guards.json` ou outros arquivos em `synthesis/` diretamente para "corrigir" algo rapidamente.
+
+**Causa raiz:** Os arquivos de synthesis parecem editáveis e a mudança parece simples.
+
+**O que acontece:**
+
+- Na próxima execução de `maes sync`, toda edição manual é sobrescrita
+- A inconsistência entre `human/` e `synthesis/` cria comportamento imprevisível até o próximo sync
+- Guards ou assertions criadas manualmente não têm arquivo de origem rastreável
+- O compilador pode rejeitar o JSON editado e falhar silenciosamente
+
+**Solução:** Nunca edite arquivos em `synthesis/`. Para mudar o contexto compilado, edite os arquivos em `context/human/` e execute `maes sync`. Use `maes explain` para entender o que o compilador gerou e por quê.
+
+---
+
+## Anti-Pattern 6: Editar inferred/ Manualmente
+
+**Sintoma visível:** Dev edita `context/inferred/gaps.json` ou outros arquivos em `inferred/` para "corrigir" a análise automática.
+
+**Causa raiz:** O resultado do agente externo `/maes-analyze` parece incompleto ou incorreto, e editar o JSON parece mais rápido que re-analisar.
+
+**O que acontece:**
+
+- Na próxima execução de `/maes-analyze`, a edição manual é sobrescrita
+- O gap entre o que está em `inferred/` e o que o LLM realmente detectaria se acumula
+- Informações editadas manualmente não têm proveniência rastreável
+
+**Solução:** Para corrigir a análise inferida, corrija a fonte: ajuste o codebase ou adicione contexto em `human/` que guie melhor a próxima análise. Re-execute `/maes-analyze` no seu cliente de IA.
+
+---
+
+## Anti-Pattern 7: Não Rodar maes sync após Editar human/\*.md
+
+**Sintoma visível:** Dev edita `business-rules.md` com uma nova invariante de domínio crítica, mas os adapters (CLAUDE.md, .cursor/rules/) ainda refletem o estado anterior.
+
+**Causa raiz:** A conexão entre editar os arquivos fonte e regenerar os adapters não é automática — requer `maes sync` manual.
+
+**O que acontece:**
+
+- A IA trabalha com contexto desatualizado mesmo após a edição
+- `maes validate` em CI falha por staleness se o sync não foi commitado
+- Guards novos não existem nos adapters — a ferramenta de IA não os aplica
+- A edição em `human/` existe no repositório mas não tem efeito prático
+
+**Solução:** `maes sync` é obrigatório após qualquer edição em `context/human/`. Adicione como passo no seu workflow de contribuição: editar → sync → commit (os arquivos de synthesis/ e adapters juntos). Configure o workflow `maes-validate.yml` para detectar esse caso em CI.
+
+---
+
+## Anti-Pattern 8: Colocar Segredos em context/human/
+
+**Sintoma visível:** Dev adiciona uma API key, connection string ou senha em `integrations.md` ou `compliance.md` "para a IA ter acesso ao contexto real".
+
+**Causa raiz:** Confusão entre contexto de negócio (o que a IA precisa saber sobre contratos e integrações) e credenciais de runtime (o que o sistema usa para autenticar).
+
+**O que acontece:**
+
+- Arquivos em `context/human/` são commitados no repositório
+- O segredo fica exposto no histórico do git para qualquer pessoa com acesso ao repo
+- Em repositórios públicos, segredos em `human/` ficam públicos imediatamente
+
+**Solução:** `context/human/` contém descritivos de contrato, não credenciais. Por exemplo, em `integrations.md` escreva: "Integração com Stripe via webhook — autenticação por `STRIPE_WEBHOOK_SECRET` (env var, nunca commitada)". A env var em si nunca vai no arquivo.
+
+---
+
+## Anti-Pattern 9: Hot Context acima de 800 Tokens
+
+**Sintoma visível:** `maes validate` falha com erro de budget. O CLAUDE.md gerado é muito grande. O compilador reporta overflow no hot context.
+
+**Causa raiz:** Os arquivos de layer 1-3 (`compliance.md`, `integrations.md`) foram escritos com nível de detalhe excessivo — incluindo exemplos, histórico e notas que não pertencem ao hot context.
+
+**O que acontece:**
+
+- CI falha em `maes validate` — o gate não passa
+- A IA recebe menos espaço para geração porque o contexto ocupa tokens demais
+- Ferramentas de IA com janela de contexto menor truncam o prompt
+
+**Solução:** Hot context (layers 1-3) deve conter apenas regras e restrições essenciais — não histórico, não exemplos, não justificativas. Use `maes explain status` para ver quantos tokens cada layer ocupa. Mova detalhe explicativo para `decisions.md` (layer 4, warm context).
+
+---
+
+## Anti-Pattern 10: Ignorar Conflitos UNRESOLVED em vez de Resolver
+
+**Sintoma visível:** `maes validate` falha por conflito UNRESOLVED; o time faz um bypass temporário ou comenta o step de CI em vez de resolver o conflito.
+
+**Causa raiz:** Resolver o conflito exige decisão humana (escolher qual assertion prevalece), o que requer tempo e acordo entre pessoas.
+
+**O que acontece:**
+
+- Conflitos acumulam — cada sync pode gerar novos conflitos enquanto os antigos ficam pendentes
+- A IA recebe contexto contraditório: dois arquivos `human/` dizem coisas opostas sobre o mesmo comportamento
+- A dívida técnica de contexto cresce silenciosamente
+- Quando o CI bypass é removido, há um backlog de conflitos difíceis de rastrear
+
+**Solução:** Use `maes explain conflict --id CONFLICT-NNN` para entender exatamente o que conflita. Resolva na fonte — edite os arquivos `human/` para alinhar as assertions contraditórias. Execute `maes sync`. Trate conflitos como bugs de contexto: cada um que entra na main precisa de resolução antes do próximo ciclo.
+
+---
+
+## Anti-Pattern 11: Chat Eterno
+
+**Sintoma visível:** Dev mantém a mesma conversa ativa por dias ou semanas, acumulando tasks, decisões intermediárias e contexto transitório.
+
+**Causa raiz:** Intuição de que manter a "sessão ativa" preserva continuidade de trabalho. Na prática, o modelo não tem memória persistente — cada resposta lê todo o histórico da conversa, mas distribuindo atenção por um contexto crescente.
+
+**O que acontece:**
+
+- Instruções do início da conversa recebem menos peso conforme o contexto cresce
+- O modelo começa a contradizer respostas anteriores
+- Decisões tomadas e descartadas coexistem no histórico e confundem respostas futuras
+- A sessão acumula contexto de múltiplas tasks com escopo diferente
+
+**Solução:** Uma task por conversa. Ao concluir, feche e abra nova conversa. O contexto do projeto está no MAES — não precisa estar no histórico do chat.
+
+---
+
+## Anti-Pattern 12: Resumo de Erro
+
+**Sintoma visível:** Dev escreve "deu um erro no banco" ou "a autenticação está quebrando" ao invés de colar o stack trace completo.
+
+**Causa raiz:** Instinto de "limpar" a informação antes de passar para a IA, como se fosse necessário resumir para economizar tokens ou facilitar a leitura.
+
+**O que acontece:**
+
+- A IA diagnostica a partir do que vê, não do que você interpreta
+- O diagnóstico vai ser tão bom quanto o resumo — que é sempre menos preciso que o dado original
+- A IA pode identificar padrões no stack trace que o resumo eliminou
+
+**Solução:** Cole o stack trace completo, o output do console, a mensagem de erro exata. Se o log for muito grande, cole as últimas N linhas relevantes — mas nunca um resumo verbal do que você achou que aconteceu.
+
+---
+
+## Anti-Pattern 13: Solicitação Vaga
+
+**Sintoma visível:** Dev pede "melhora esse código" ou "refatora isso" sem especificar o que está errado, o que deveria melhorar, ou qual é o critério de sucesso.
+
+**Causa raiz:** Dificuldade em articular o problema antes de ver o código transformado. A IA parece boa em "sentir" o que precisa melhorar.
+
+**O que acontece:**
+
+- A IA aplica melhorias genéricas que podem ser corretas em geral mas erradas para o contexto
+- Sem critério de sucesso, não há como saber quando o trabalho terminou
+- O loop de iteração fica longo porque cada resposta pode estar "mais ou menos" certa
+
+**Solução:** Antes de enviar o prompt, defina o objetivo completo: o que está errado, o que deveria ser diferente, qual o critério de aceitação. "Adiciona tratamento de erro no endpoint POST /orders — deve retornar 422 com body `{ error: 'validation_failed', fields: [...] }` quando a validação falhar" é acionável. "Melhora esse endpoint" não é.
+
+---
+
+## Anti-Pattern 14: Misturar Brainstorm e Execução
+
+**Sintoma visível:** Dev explora opções de arquitetura e implementa a solução na mesma conversa, sem separar as duas fases.
+
+**Causa raiz:** Parece eficiente — uma conversa contínua do problema à solução.
+
+**O que acontece:**
+
+- O modelo carrega o contexto exploratório junto com o contexto de execução
+- Código gerado pode misturar a abordagem descartada com a abordagem escolhida
+- É difícil saber, ao revisar o código, qual decisão o modelo estava aplicando
+
+**Solução:** Brainstorm em uma conversa. Decisão tomada, abra nova conversa e implemente. O contexto de execução deve conter apenas a decisão final — não as alternativas que foram consideradas e descartadas no caminho.
+
+---
+
+## Anti-Pattern 15: Não Mostrar o Arquivo
+
+**Sintoma visível:** Dev descreve verbalmente o código ao invés de abrir o arquivo no IDE e selecionar o trecho relevante.
+
+**Causa raiz:** Parece mais rápido descrever do que abrir o arquivo. Às vezes o dev não sabe exatamente onde o código está.
+
+**O que acontece:**
+
+- Descrições verbais são sempre menos precisas que o código real
+- A IA pode operar em uma versão diferente do código do que a que existe no arquivo
+- Mudanças geradas podem não aplicar ao contexto real do arquivo
+
+**Solução:** Abra o arquivo no IDE antes de fazer a solicitação. Selecione o trecho específico quando a mudança for localizada. Ferramentas como Claude Code e Cursor usam o arquivo aberto e a seleção ativa como contexto — essa informação é mais confiável do que qualquer descrição verbal.
+
+---
+
+## Anti-Pattern 16: Aceitar Refactor Gigante sem Revisão Adequada
+
+**Sintoma visível:** Dev pede refactor de múltiplos arquivos e aceita o resultado sem revisar cada arquivo tocado — ou revisa superficialmente focando apenas no arquivo principal.
+
+**Causa raiz:** Refactors grandes da IA parecem corretos porque a estrutura geral parece certa. A revisão superficial confirma o padrão geral mas perde os detalhes.
+
+**O que acontece:**
+
+- Regressões em caminhos não cobertos por testes
+- Comportamentos sutilmente alterados em código que parecia apenas "reorganizado"
+- Mudanças fora do escopo pedido — a IA às vezes "melhora" coisas que não foram pedidas
+- Edge cases que existiam na implementação original e desaparecem na refatorada
+
+**Solução:** Para refactors que tocam múltiplos arquivos, revise cada arquivo no diff. A pergunta guia: "se eu tivesse escrito esse código sem IA, teria eu mesmo aprovado em code review?" Execute os testes completos antes de aceitar. Para refactors de alto risco (auth, pagamento, integração externa), considere dividir em PRs menores com escopo isolado.
+
+---
+
+## Resumo
+
+| Anti-Pattern                         | Sintoma                                 | Solução                                            |
+| ------------------------------------ | --------------------------------------- | -------------------------------------------------- |
+| Vibe coding sem contexto configurado | Código fora do padrão                   | `maes init`, `/maes-analyze`, `maes sync`          |
+| Aceitar 1º output sem revisão        | Bugs em edge cases                      | Self-review + agent `/maes-eval`                   |
+| Context pollution no CLAUDE.md       | CI falha por budget                     | Usar os 5 arquivos `human/` + `maes sync`          |
+| Ignorar feedback da IA               | Mesmas discussões se repetem            | Registrar em `decisions.md` + `maes sync`          |
+| Editar `synthesis/` diretamente      | Edição sobrescrita no próximo sync      | Editar `human/` → `maes sync`                      |
+| Editar `inferred/` diretamente       | Análise corrompida                      | Re-executar `/maes-analyze` no cliente de IA       |
+| Não rodar `maes sync` após editar    | Adapters desatualizados                 | `maes sync` obrigatório após edição                |
+| Segredos em `context/human/`         | Credenciais expostas no git             | Usar env vars, descrever contratos sem credenciais |
+| Hot context acima de 800 tokens      | `maes validate` falha                   | Mover detalhe para warm context (layer 4+)         |
+| Ignorar conflitos UNRESOLVED         | Dívida de contexto acumula              | `maes explain conflict` → resolver na fonte        |
+| Chat eterno                          | Respostas incoerentes ao longo do tempo | Uma task por conversa                              |
+| Resumo de erro                       | Diagnóstico impreciso                   | Colar stack trace completo                         |
+| Solicitação vaga                     | Loop longo de iteração                  | Definir objetivo e critério de aceitação           |
+| Misturar brainstorm e execução       | Código mistura abordagens               | Separar fases em conversas distintas               |
+| Não mostrar o arquivo                | Mudanças fora do contexto real          | Abrir o arquivo e selecionar o trecho              |
+| Aceitar refactor gigante sem revisão | Regressões não detectadas               | Revisar cada arquivo + executar testes completos   |

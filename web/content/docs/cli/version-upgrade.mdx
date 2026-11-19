@@ -1,0 +1,194 @@
+---
+title: "Versão e Upgrade"
+description: "Como verificar a versão do MAES instalada em um projeto e migrar com segurança para novas versões sem perder o contexto."
+---
+
+## Por que controlar versão?
+
+Cada repositório que usa o MAES tem um `.maes/` gerado em um momento específico. Quando o CLI evolui — novos campos no `config.yaml`, novas capacidades de compilação, schemas de synthesis atualizados — projetos antigos precisam migrar antes de usar as funcionalidades novas.
+
+O MAES controla isso com:
+
+- Um campo `meta.maes_version` no `.maes/config.yaml` que registra a versão usada no último `init` ou `upgrade`
+- Um comando `maes version` que compara o CLI atual com o que está no projeto
+- Um comando `maes upgrade` que aplica as migrations necessárias preservando todo o contexto em `context/human/`
+
+---
+
+## `maes version`
+
+Exibe a versão do CLI instalado e o status do projeto atual.
+
+```bash
+maes version
+```
+
+**Saída típica — projeto em dia:**
+
+```
+MAES CLI   0.1.0
+
+Project    my-repo  (.maes/)
+  stored   0.1.0
+  status   up to date
+```
+
+**Saída quando há upgrade disponível:**
+
+```
+MAES CLI   0.2.0
+
+Project    my-repo  (.maes/)
+  stored   0.1.0
+  status   UPGRADE AVAILABLE (0.1.0 → 0.2.0) — run 'maes upgrade'
+```
+
+**Saída para projeto pré-versionamento (criado antes do MAES 0.1.0):**
+
+```
+MAES CLI   0.1.0
+
+Project    my-repo  (.maes/)
+  stored   — (pre-versioning)
+  status   UPGRADE AVAILABLE — run 'maes upgrade' to apply
+```
+
+**Flags:**
+
+| Flag                 | Descrição                                      |
+| -------------------- | ---------------------------------------------- |
+| `--project-dir PATH` | Aponta para um diretório de projeto específico |
+
+---
+
+## `maes upgrade`
+
+Aplica todas as migrations pendentes e regera os adapters via `maes sync`.
+
+```bash
+maes upgrade
+```
+
+**Fluxo completo:**
+
+```
+Detected project version: — (pre-versioning)
+Target version:           0.1.0
+
+Migrations to run:
+  [1/1] 0.0.0 → 0.1.0  Add meta.maes_version to config.yaml
+
+Backing up .maes/context/human/ → .maes/cache/upgrade-backup-20260524-143000 ... ✓
+Running migration 1/1 (0.0.0 → 0.1.0) ... ✓
+Stamping config.yaml with maes_version=0.1.0 ... ✓
+
+Running maes sync ...
+
+Done. Project upgraded to 0.1.0
+```
+
+### O que é preservado
+
+O `maes upgrade` nunca toca em `context/human/` — esses arquivos são a fonte de verdade do contexto e permanecem intactos. Antes de qualquer migration, o upgrade faz backup automático de `context/human/` em `.maes/cache/upgrade-backup-{timestamp}/`.
+
+| Diretório/arquivo    | Comportamento durante upgrade                                                    |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `context/human/*.md` | **Preservado intacto** — nunca modificado                                        |
+| `context/inferred/`  | Preservado — regenere rodando `/maes-analyze` no seu cliente de IA se necessário |
+| `synthesis/`         | Regenerado por `maes sync` ao final                                              |
+| `adapters/`          | Regenerado por `maes sync` ao final                                              |
+| `config.yaml`        | Atualizado pelas migrations (additive — sem remover campos)                      |
+| `agents/*.yaml`      | Preservado — migrations podem adicionar campos novos                             |
+
+### Flags
+
+| Flag                 | Descrição                                                                     |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `--dry-run`          | Lista as migrations sem aplicar nenhuma — útil para revisar antes de executar |
+| `--skip-sync`        | Pula o `maes sync` final — útil em pipelines CI que rodam sync separadamente  |
+| `--project-dir PATH` | Aponta para um diretório de projeto específico                                |
+
+### Dry run
+
+Para ver o que seria feito sem alterar nada:
+
+```bash
+maes upgrade --dry-run
+```
+
+```
+Detected project version: 0.1.0
+Target version:           0.2.0
+
+Migrations to run:
+  [1/1] 0.1.0 → 0.2.0  Migrate agent YAML schema to v2
+
+Dry run — no changes applied.
+```
+
+---
+
+## Fluxo recomendado ao atualizar o CLI
+
+```bash
+# 1. Atualize o CLI
+pipx upgrade maes
+
+# 2. Verifique o status de cada projeto
+maes version
+
+# 3. Aplique as migrations
+maes upgrade
+
+# 4. Revise e commit
+git add .maes/
+git commit -m "chore: upgrade MAES to $(maes version | head -1)"
+```
+
+Para múltiplos repositórios, use um script de automação que rode esses passos em cada um.
+
+---
+
+## Adicionando uma nova migration (contribuidores)
+
+Cada migration fica em `template/scripts/tools/maes/migrations/` com o padrão de nome `m_{from}_{to}.py`.
+
+**Exemplo de migration `0.1.0 → 0.2.0`:**
+
+```python
+# maes/migrations/m_0_1_0_to_0_2_0.py
+from pathlib import Path
+from maes.migrations import Migration
+
+
+def run(maes_dir: Path) -> None:
+    # Faça mudanças aditivas em .maes/ aqui
+    # NUNCA toque em context/human/
+    config_path = maes_dir / "config.yaml"
+    ...
+
+
+MIGRATION = Migration(
+    from_version="0.1.0",
+    to_version="0.2.0",
+    description="Descrição curta do que muda",
+    run=run,
+)
+```
+
+Depois registre no `migrations/__init__.py`:
+
+```python
+def _load_migrations() -> list[Migration]:
+    from .m_0_0_0_to_0_1_0 import MIGRATION as m0
+    from .m_0_1_0_to_0_2_0 import MIGRATION as m1
+    return [m0, m1]
+```
+
+### Regras para escrever migrations
+
+- Seja **idempotente**: rodar duas vezes deve ter o mesmo resultado que rodar uma vez
+- Seja **aditivo**: adicione campos, não remova
+- **Nunca toque em `context/human/`** — esse diretório é sagrado
+- Nunca chame LLM — migrations são determinísticas como `maes sync`
+- Documente o "por quê" no docstring do módulo

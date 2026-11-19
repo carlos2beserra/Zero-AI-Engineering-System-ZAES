@@ -1,0 +1,32 @@
+# MAES Blueprint bootstrap — ÚNICA fonte de execução (Official First).
+# Toda chamada de ferramenta parte daqui. O agente /maes-create executa estes
+# passos via Bash; o MAES nunca reimplementa scaffolding.
+#
+# strategy: como criar num diretório que já contém .maes/ (pós `maes init`).
+#   temporary-directory → scaffoldar em subdir temp e mover, preservando
+#                         .maes/, .claude/, CLAUDE.md, .gitignore.
+#   in-place            → usar as flags in-place da própria ferramenta oficial.
+# O MAES não cria mecanismo próprio de merge — segue as capacidades da ferramenta.
+#
+# Não há scaffolder monolítico de FastAPI: a estrutura oficial nasce de `uv init`
+# (projeto Python) + `alembic init` (migrations). Ambas são ferramentas oficiais
+# do ecossistema.
+
+strategy: temporary-directory
+
+steps:
+  - id: scaffold
+    description: "Inicializar projeto Python via uv (oficial)"
+    run: "uv init <name>"
+
+  - id: deps
+    description: "Stack definida pela organização (cada dependência justificada)"
+    run: "cd <name> && uv add fastapi \"uvicorn[standard]\" sqlmodel alembic \"psycopg[binary]\" pydantic-settings \"python-jose[cryptography]\" \"passlib[bcrypt]\" && uv add --dev pytest httpx"
+
+  - id: configure
+    description: "Inicializar migrations via Alembic (CLI oficial)"
+    run: "cd <name> && uv run alembic init alembic"
+
+finalize:
+  - "maes blueprint seed fastapi-api"
+  - "maes sync"

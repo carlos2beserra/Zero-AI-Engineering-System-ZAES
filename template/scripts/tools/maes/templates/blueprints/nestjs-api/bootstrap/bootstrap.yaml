@@ -1,0 +1,39 @@
+# MAES Blueprint bootstrap — ÚNICA fonte de execução (Official First).
+# Toda chamada de ferramenta parte daqui. O agente /maes-create executa estes
+# passos via Bash; o MAES nunca reimplementa scaffolding.
+#
+# strategy: como criar num diretório que já contém .maes/ (pós `maes init`).
+#   temporary-directory → scaffoldar em subdir temp e mover, preservando
+#                         .maes/, .claude/, CLAUDE.md, .gitignore.
+#   in-place            → usar as flags in-place da própria ferramenta oficial.
+# O MAES não cria mecanismo próprio de merge — segue as capacidades da ferramenta.
+#
+# Gate de build scripts (pnpm 10+): o pnpm bloqueia postinstall de dependências e
+# ABORTA o install (exit 1) até aprovação interativa. Isso quebraria `pnpm add`
+# (Prisma tem postinstall) e o dep-check do `nest build`. Declaramos
+# `dangerouslyAllowAllBuilds: true` no pnpm-workspace.yaml — decisão explícita: um
+# scaffold greenfield já roda código de ferramentas oficiais, e o postinstall do
+# @prisma/client (prisma generate) precisa rodar. Não enumeramos deps (evita drift).
+
+strategy: temporary-directory
+
+steps:
+  - id: scaffold
+    description: "Scaffold via Nest CLI (oficial)"
+    run: "pnpm dlx @nestjs/cli new <name> --package-manager pnpm --skip-git"
+
+  - id: gate
+    description: "Liberar o gate de build scripts do pnpm (senão pnpm add/nest build abortam)"
+    run: "printf 'dangerouslyAllowAllBuilds: true\\n' > pnpm-workspace.yaml"
+
+  - id: deps
+    description: "Dependências aprovadas do Blueprint"
+    run: "pnpm add zod @prisma/client && pnpm add -D prisma"
+
+  - id: configure
+    description: "Inicializar Prisma com PostgreSQL"
+    run: "pnpm dlx prisma init --datasource-provider postgresql"
+
+finalize:
+  - "maes blueprint seed nestjs-api"
+  - "maes sync"

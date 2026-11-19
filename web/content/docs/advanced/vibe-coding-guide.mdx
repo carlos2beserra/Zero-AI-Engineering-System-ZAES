@@ -1,0 +1,161 @@
+---
+title: Vibe Coding com Contexto
+description: Como usar AI coding agents de forma profissional quando você programa principalmente com IA — sem perder qualidade nem controle do que foi gerado.
+---
+
+Vibe coding — programar com IA como pair programmer principal, iterar rápido, usar o modelo para explorar soluções — é uma forma legítima e produtiva de trabalhar. O problema não é a abordagem. O problema é quando ela opera sem contexto estruturado.
+
+Este guia é para quem usa Claude, Cursor, Copilot ou Windsurf intensivamente e quer garantir que o resultado seja confiável — não apenas no seu ambiente, mas em revisão de código, em CI, e em produção.
+
+---
+
+## O que muda quando você tem MAES configurado
+
+Sem MAES, cada sessão começa do zero. A IA não sabe:
+
+- Que `external_crm_id` não pode ser removido
+- Que a tabela `audit_logs` é imutável por compliance
+- Que o time já avaliou Prisma e escolheu TypeORM
+
+Com MAES configurado e `maes sync` executado, essas regras estão no CLAUDE.md, no `.cursor/rules/`, no `.windsurfrules`. A IA recebe esse contexto automaticamente em toda sessão — você não precisa reexplicar o projeto a cada conversa.
+
+O que você ganha:
+
+- A IA respeita as regras do domínio sem você precisar lembrá-la toda vez
+- Decisões que o time tomou ficam no contexto — a IA não vai propor o que já foi descartado
+- Se você aceitar um output que viole uma regra crítica, o agent `/maes-eval` detecta
+
+O que não muda:
+
+- Você ainda é responsável pelo código que aceita
+- Você ainda precisa revisar o diff
+- A IA ainda vai errar em edge cases
+
+---
+
+## Práticas que fazem diferença imediata
+
+**Mostre o erro completo, não o resumo**
+
+Quando algo quebra, cole o stack trace completo. A IA diagnostica a partir do que vê. Se você escreve "deu um erro de null pointer", ela vai adivinhar — e vai adivinhar errado com frequência.
+
+```
+❌ "deu um erro no banco de dados quando tento criar o pedido"
+
+✅ [colar o stack trace completo, output do console, mensagem de erro exata]
+```
+
+**Abra o arquivo, selecione o trecho**
+
+Antes de pedir uma mudança em código existente, abra o arquivo no IDE e selecione o trecho específico. Ferramentas como Claude Code e Cursor usam essa seleção como contexto. Sem ela, o modelo trabalha com uma descrição verbal do código — e descrições são sempre menos precisas do que o código real.
+
+**Uma feature por conversa**
+
+Misturar autenticação, pagamento e notificação na mesma conversa degrada o resultado das três. O modelo alterna de contexto e começa a misturar detalhes. Quando você concluir uma coisa, abra nova conversa para a próxima.
+
+**Dê o objetivo, não só a ação**
+
+A diferença entre um objetivo e uma ação:
+
+```
+Ação: "adiciona validação de CPF"
+Objetivo: "o endpoint POST /checkout deve retornar 422 com body { error: 'invalid_cpf' }
+           quando o campo taxpayer_id contém um CPF com dígitos verificadores inválidos.
+           Usar cpf-cnpj-validator, não regex."
+```
+
+Objetivo inclui o critério de sucesso. Com critério de sucesso, você sabe quando o trabalho terminou — e pode verificar se terminou.
+
+**Não misture brainstorm com execução**
+
+Quando você não tem certeza de como fazer algo, brainstorm antes: explore opções, pese alternativas, decida. Depois abra nova conversa e implemente o que decidiu. Misturar as duas fases na mesma conversa gera código que mistura a abordagem descartada com a abordagem escolhida.
+
+---
+
+## Quando não confiar no output sem verificar
+
+A IA acerta o happy path. Ela erra sistematicamente em alguns padrões específicos:
+
+**Código que mexe em banco de dados**
+
+Migrations, alterações de schema, remoção de campos — sempre revisar. A IA pode não saber que aquele campo é uma join key com sistema externo. Com MAES, isso está documentado em `integrations.md` e entra no contexto. Mas revise mesmo assim.
+
+**Código de autenticação e autorização**
+
+Regras de permissão têm edge cases que o happy path não cobre. Revise explicitamente: quem pode ver o quê, o que acontece quando o token expira, o que acontece quando o usuário não tem a role esperada.
+
+**Código que "simplifica" algo complexo**
+
+Quando a IA sugere simplificar uma validação, remover um tratamento de erro ou eliminar um campo que "não é usado", questione. Complexidade aparentemente desnecessária frequentemente existe por motivo real. Com MAES, esses motivos estão em `business-rules.md` e `compliance.md`.
+
+**Código de integração com sistemas externos**
+
+Payloads de webhook, contratos de API, rate limits — a IA pode alterar algo que quebra uma integração silenciosamente. Verifique `integrations.md` para saber o que não pode mudar.
+
+---
+
+## Revisando o que foi gerado
+
+Aceitar código sem revisar não é produtividade — é transferir o problema para produção.
+
+A revisão não precisa ser longa. Para mudanças simples:
+
+1. Leia o diff completo
+2. Execute os testes existentes
+3. Teste o fluxo principal manualmente
+
+Para mudanças maiores ou críticas:
+
+1. Revise cada arquivo tocado
+2. Verifique edge cases explicitamente
+3. Rode o agent `/maes-eval` para confirmar conformidade com o contexto do projeto
+
+A pergunta que deve guiar a revisão: _"se eu tivesse escrito esse código sem IA, teria eu mesmo aprovado em code review?"_
+
+---
+
+## O que fazer quando a IA sugere algo que você já descartou
+
+A IA vai sugerir Prisma quando o time escolheu TypeORM. Vai propor MongoDB quando o time decidiu PostgreSQL. Vai sugerir JWT stateless quando o time precisou de revogação imediata.
+
+Quando isso acontece, não descarte mentalmente. Registre:
+
+```bash
+# Use o agente externo /maes-context-add no seu cliente de IA, ou edite
+# diretamente .maes/context/human/decisions.md com:
+#   "DEC-NNN: [alternativa] foi avaliada e descartada. Motivo: [razão]"
+maes sync
+```
+
+Após o sync, a decisão está no contexto compilado. Na próxima sessão — e na sessão do dev ao lado — a IA não vai propor a mesma alternativa novamente.
+
+---
+
+## Sinais de que a sessão está degradando
+
+Você vai notar quando uma sessão está acumulando contexto demais:
+
+- A IA começa a propor a abordagem que você descartou no começo da conversa
+- As respostas ficam mais longas mas menos precisas
+- A IA pede confirmação de coisas que já foram estabelecidas
+- O código nas últimas respostas é inconsistente com o código nas primeiras
+
+Quando isso acontecer: **abra nova conversa**. Não tente corrigir o contexto dentro da mesma sessão. Começar do zero com objetivo claro é mais eficiente do que tentar recuperar uma sessão degradada.
+
+---
+
+## Sem MAES: o que acontece
+
+Para entender o valor do contexto, é útil saber o que acontece sem ele:
+
+- A IA preenche lacunas de domínio com comportamento genérico — que frequentemente está errado para o seu caso
+- Cada sessão começa do zero — regras repetidas em toda conversa, ou esquecidas
+- Decisões tomadas em um chat não chegam para outros devs
+- Não há mecanismo de validação — o contexto desatualizado não é detectado
+- Em times, contexto é pessoal e diverge entre devs
+
+Com MAES configurado, o contexto é um artefato de engenharia: versionado no repositório, compartilhado via git, validado em CI.
+
+---
+
+Para o guia completo de como estruturar sessões de trabalho, veja [Trabalhando com AI Coding Agents](/docs/advanced/working-with-ai-agents). Para os erros mais comuns e como evitar, veja [Anti-Patterns](/docs/reference/anti-patterns).

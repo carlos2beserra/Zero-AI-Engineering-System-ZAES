@@ -1,0 +1,235 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   MAXXI QUALITY — DESIGN TOKEN SYSTEM
+   Strategy: CSS variables consumed by Tailwind + shadcn/ui
+   All values expressed as HSL channels (no hsl() wrapper)
+   so Tailwind can compose them with opacity modifiers.
+   ============================================================ */
+
+@layer base {
+  /* ----------------------------------------------------------
+     LIGHT THEME
+     Background : #FFFFFF  Card: #F0F1F7  Border: #CFD2E6
+     Text primary: #1F2937  Secondary: #3F4045  Muted: #8F96A3
+     Primary blue: #2E4073
+     Accent / AI gradient: #FF7559 → #FFB726
+  ---------------------------------------------------------- */
+  :root {
+    /* Surfaces */
+    --background: 0 0% 100%;
+    --foreground: 220 18% 16%;
+
+    --card: 230 20% 95%;
+    --card-foreground: 220 18% 16%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 18% 16%;
+
+    /* Brand */
+    --primary: 223 39% 33%;
+    --primary-foreground: 0 0% 100%;
+
+    --electric: 223 39% 33%;
+    --electric-foreground: 0 0% 100%;
+
+    /* CTA */
+    --cta: 10 100% 67%;
+    --cta-hover: 40 100% 57%;
+    --cta-foreground: 0 0% 100%;
+
+    /* Gradient */
+    --gradient-start: 10 100% 67%;
+    --gradient-end: 40 100% 57%;
+
+    /* Secondary / Muted surfaces */
+    --secondary: 230 20% 91%;
+    --secondary-foreground: 220 10% 28%;
+
+    --muted: 230 20% 95%;
+    --muted-foreground: 220 10% 58%;
+
+    /* Accent */
+    --accent: 230 20% 91%;
+    --accent-foreground: 220 18% 16%;
+
+    /* Feedback */
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders */
+    --border: 230 25% 85%;
+    --input: 230 25% 85%;
+    --ring: 223 39% 33%;
+
+    /* Status */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 48 96% 52%;
+    --warning-foreground: 0 0% 100%;
+
+    /* Overlay */
+    --overlay: 220 18% 16%;
+
+    --radius: 0.5rem;
+  }
+
+  /* ----------------------------------------------------------
+     DARK THEME
+     Background: #101318  Card: #1F222A  Border: #2A2E3A
+     Text primary: #FFFFFF  Secondary: #B0B6C3  Muted: #8F96A3
+     Primary blue: #2E4073
+     Accent / AI gradient: #FF7559 → #FFB726
+  ---------------------------------------------------------- */
+  .dark {
+    /* Surfaces */
+    --background: 220 15% 12%;
+    --foreground: 0 0% 100%;
+
+    --card: 220 12% 12%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 220 12% 12%;
+    --popover-foreground: 0 0% 100%;
+
+    /* Brand */
+    --primary: 223 39% 33%;
+    --primary-foreground: 0 0% 100%;
+
+    --electric: 223 39% 40%;
+    --electric-foreground: 0 0% 100%;
+
+    /* CTA */
+    --cta: 10 100% 67%;
+    --cta-hover: 40 100% 57%;
+    --cta-foreground: 0 0% 100%;
+
+    /* Gradient */
+    --gradient-start: 10 100% 67%;
+    --gradient-end: 40 100% 57%;
+
+    /* Secondary */
+    --secondary: 220 12% 16%;
+    --secondary-foreground: 220 10% 70%;
+
+    /* Muted */
+    --muted: 220 12% 14%;
+    --muted-foreground: 220 10% 65%;
+
+    /* Accent */
+    --accent: 220 12% 16%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Feedback */
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders & inputs */
+    --border: 220 12% 18%;
+    --input: 220 12% 18%;
+    --ring: 223 39% 40%;
+
+    /* Status */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 48 96% 52%;
+    --warning-foreground: 0 0% 100%;
+
+    /* Overlay */
+    --overlay: 220 18% 8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    height: 4px;
+    width: 4px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-background/80 backdrop-blur-md border border-border;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-maes bg-clip-text text-transparent;
+  }
+}
+
+@layer utilities {
+  .gradient-primary {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--gradient-start)),
+      hsl(var(--gradient-end))
+    );
+  }
+
+  .gradient-primary-text {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--gradient-start)),
+      hsl(var(--gradient-end))
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .gradient-cta {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--cta)) 0%,
+      hsl(var(--cta-hover)) 100%
+    );
+  }
+
+  .badge-gradient-cta {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--cta)) 0%,
+      hsl(var(--cta-hover)) 100%
+    );
+    border-color: transparent;
+  }
+
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.4) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.4) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .shadow-glow {
+    box-shadow: 0 0 40px -10px hsl(var(--cta) / 0.5);
+  }
+}

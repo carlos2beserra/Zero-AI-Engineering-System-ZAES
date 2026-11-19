@@ -1,0 +1,327 @@
+---
+title: "Integração com Claude Code"
+description: "Como o MAES gera e estrutura o CLAUDE.md para o Claude Code — hot context, guards e hierarquia de carregamento."
+---
+
+## Como o CLAUDE.md é carregado
+
+O Claude Code carrega automaticamente `CLAUDE.md` da raiz do projeto em toda sessão. Não é necessário nenhuma configuração adicional — o arquivo estar na raiz é suficiente para que o contexto esteja disponível antes da primeira mensagem.
+
+O MAES gera esse arquivo via `maes sync`. O conteúdo é compilado a partir de `.maes/context/human/*.md` e estruturado nas seções que o Claude Code irá consumir.
+
+**Hierarquia de carregamento do Claude Code:**
+
+1. `~/.claude/CLAUDE.md` — configuração pessoal global do desenvolvedor
+2. `CLAUDE.md` na raiz do repositório — contexto do projeto (gerado pelo MAES)
+3. `CLAUDE.md` em subdiretórios — contexto de módulos específicos (carregado quando você está naquele diretório)
+
+O CLAUDE.md gerado pelo MAES fica no nível 2 e é o contexto principal do projeto.
+
+## O que vai no CLAUDE.md gerado
+
+O compilador MAES estrutura o CLAUDE.md em seções correspondentes às 7 camadas de prioridade. O Claude Code lê o arquivo linearmente — as regras de maior prioridade aparecem primeiro.
+
+```markdown
+# MAES Context — [nome do projeto]
+
+> Gerado automaticamente por MAES. Não editar diretamente.
+> Última sincronização: 2026-05-22 | Assertions: 45 | Guards: 8
+
+---
+
+## Compliance e Segurança (Layer 1-2)
+
+<!-- hot context — sempre no topo -->
+
+- PII de usuários (CPF, endereço, dados de saúde) nunca deve aparecer em logs.
+- Toda ação que modifica dados financeiros exige registro de audit trail antes de retornar resposta.
+- Dados de cartão de crédito: apenas os últimos 4 dígitos podem ser armazenados ou exibidos.
+
+---
+
+## Contratos Externos (Layer 3)
+
+<!-- hot context -->
+
+- A API do parceiro de pagamentos (Stripe) tem rate limit de 100 req/s por conta — nunca implementar retry sem backoff exponencial.
+- O webhook de notificação de status deve responder em até 5 segundos ou o parceiro considera falha.
+
+---
+
+## Decisões Arquiteturais (Layer 4)
+
+<!-- warm context — lido por relevância -->
+
+- DEC-007: autenticação via JWT com refresh token rotativo. Session-based auth foi descartado em 2025-03.
+- DEC-012: eventos de domínio via BullMQ. Comunicação direta entre serviços não é permitida.
+
+---
+
+## Regras de Negócio (Layer 5)
+
+<!-- warm context -->
+
+- Usuários com plano Free têm limite de 100 requisições/hora. Retornar HTTP 429 com header Retry-After.
+- Pedidos só podem ser cancelados se o status for "pending" ou "processing". Status "shipped" é imutável.
+
+---
+
+## Padrões de Engenharia (Layer 6)
+
+<!-- warm context -->
+
+- Repository pattern para acesso ao banco — nunca usar Prisma diretamente em services.
+- Erros tipados por módulo: cada módulo tem seu arquivo `errors.ts` com classes que estendem `AppError`.
+- Conventional Commits obrigatório: feat/fix/docs/chore/refactor/test/ci.
+
+---
+
+## Guards
+
+| Path                       | Tipo        | Ação requerida                                          |
+| -------------------------- | ----------- | ------------------------------------------------------- |
+| `src/services/payments/**` | enforcement | Aprovar com tech lead antes de qualquer mudança         |
+| `db/migrations/**`         | enforcement | Review obrigatório + teste em staging antes de produção |
+| `src/auth/**`              | contextual  | Verificar compliance e segurança antes de implementar   |
+| `.env*`                    | contextual  | Nunca commitar valores reais — apenas .env.example      |
+```
+
+## Hot context e warm context
+
+O compilador MAES divide o contexto em duas zonas:
+
+**Hot context (Layers 1-3):** compliance, segurança e contratos externos. Sempre aparece no início do CLAUDE.md. Orçamento de 800 tokens — o Claude Code lê essa parte em toda sessão independente da tarefa.
+
+**Warm context (Layers 4-6):** decisões arquiteturais, regras de negócio e padrões de engenharia. Aparece depois do hot context. Orçamento de 4.000 tokens — o Claude Code seleciona por relevância para a tarefa em andamento.
+
+Essa divisão garante que as regras mais críticas (compliance, segurança) estejam sempre disponíveis, enquanto o contexto de domínio entra quando é relevante.
+
+## Hierarquia quando já existe um CLAUDE.md no repositório
+
+Se o projeto já tem um `CLAUDE.md` criado manualmente antes do MAES, o compilador adota um comportamento diferente: **não sobrescreve o arquivo inteiro**. Em vez disso, adiciona uma seção delimitada ao final do arquivo existente.
+
+```markdown
+<!-- conteúdo manual existente permanece intacto -->
+
+---
+
+<!-- MAES_CONTEXT_START — não editar esta seção -->
+
+## Compliance e Segurança (Layer 1-2)
+
+[...]
+
+<!-- MAES_CONTEXT_END -->
+```
+
+Isso permite coexistência com conteúdo manual (como configurações de hooks, slash commands do Claude Code, preferências do time) sem que o `maes sync` destrua esse conteúdo.
+
+## Setup com Claude Code
+
+Não há configuração adicional necessária além de ter o `CLAUDE.md` na raiz do projeto. O Claude Code o carrega automaticamente.
+
+Fluxo de adoção:
+
+```bash
+# 1. Inicializar .maes/ (se ainda não existe)
+maes init
+
+# 2. (Opcional) Rodar o agente externo /maes-analyze no Claude Code para popular .maes/context/inferred/
+# 3. Compilar adapters
+maes sync
+
+# 4. O CLAUDE.md é gerado automaticamente — commitar o arquivo
+git add CLAUDE.md
+git commit -m "feat(maes): adicionar contexto compilado para Claude Code"
+
+# 5. A partir daqui, editar .maes/context/human/*.md e rodar maes sync
+# para propagar mudanças
+```
+
+---
+
+## Usando Agents via Slash Commands
+
+> **Terminologia:** _skins_ (termo MAES), _slash commands_ (Claude Code) e _skills_ (Claude Marketplace) são a mesma coisa — arquivos `.md` em `.claude/commands/` que especializam o Claude para um papel específico com persona, contexto e restrições pré-configurados.
+
+O MAES gera um arquivo de comando para cada agent em `.claude/commands/`. O Claude Code carrega essa pasta automaticamente — qualquer arquivo `.md` ali vira um slash command disponível no chat com `/`.
+
+Após `maes init` (ou `maes sync` em projetos já inicializados), a estrutura gerada é:
+
+```
+.claude/
+└── commands/
+    ├── maes-review.md
+    ├── maes-analyze.md
+    ├── maes-context-add.md
+    └── maes-eval.md
+```
+
+### Como invocar um agent
+
+Digite `/` no chat do Claude Code VSCode e selecione o agent, ou escreva diretamente. O agent mais usado no dia a dia é o `/maes-review`:
+
+```
+/maes-review
+```
+
+O `/maes-review` revisa o diff da branch atual contra o contexto compilado do MAES — assertions, guards e ownership — e emite um **MAES Review Scorecard**. As preocupações de segurança e de migração entram como heurísticas dessa revisão. Os demais agents core cobrem o restante do ciclo de contexto:
+
+```
+/maes-analyze       # propõe assertions/guards a partir do código existente
+/maes-context-add   # captura uma nova regra ou decisão no contexto humano
+/maes-eval          # avalia a qualidade do contexto compilado
+```
+
+### O que acontece quando você invoca o `/maes-review`
+
+O Claude Code carrega o arquivo `.claude/commands/maes-review.md` como instruções de sistema antes da sua mensagem. Esse arquivo contém:
+
+- O **procedimento de revisão** consultiva (o que inspecionar no diff e como pontuar)
+- O **contexto hot** compilado (assertions de Layer 1-3)
+- O **contexto warm** mais relevante para a revisão (Layer 4-6)
+- Os **guards ativos** que se aplicam aos paths tocados pelo diff
+
+Na prática, o Claude revisa o diff contra as regras compiladas do projeto e produz o Scorecard. Ele é **consultivo**: aponta riscos e desvios, mas nunca bloqueia, aprova ou faz gate — a decisão é sempre do time. O conhecimento de domínio chega pelo contexto compilado (CLAUDE.md, MCP), não por personas especializadas.
+
+### Diferença de conversar sem slash command
+
+|              | Sem slash command           | Com `/maes-review`                                  |
+| ------------ | --------------------------- | --------------------------------------------------- |
+| **Contexto** | Lê o CLAUDE.md passivamente | Carrega o contexto compilado para a revisão         |
+| **Foco**     | Resposta genérica           | Revisa o diff da branch contra assertions e guards  |
+| **Guards**   | Orientação geral            | Guards ativos para os paths tocados pelo diff       |
+| **Saída**    | Texto livre                 | MAES Review Scorecard estruturado (consultivo)      |
+
+### Quando o Claude Code sugere o review
+
+Se você fizer uma pergunta sem slash command (ex: "está pronto para abrir o PR?"), o Claude lê o CLAUDE.md e pode sugerir rodar a revisão. Ele não a executa automaticamente — você precisa digitar o slash command para isso.
+
+```
+dev: terminei a feature de refresh token, posso abrir o PR?
+
+claude: Antes de abrir, rode /maes-review — ele compara o diff da
+        branch com as regras de compliance, segurança e migração
+        do projeto e emite um Scorecard com os pontos de atenção.
+```
+
+### Por que usar a skin
+
+Sem a skin, o Claude lê o CLAUDE.md passivamente e responde como assistente genérico. Com a skin do `/maes-review`, ele **revisa o diff com o contexto compilado do projeto** — assertions, guards ativos e ownership — e produz um Scorecard consultivo. A diferença prática: o Claude avalia a mudança contra as regras específicas daquele projeto, não apenas com julgamento genérico.
+
+Para entender o padrão de qualidade de uma skin bem estruturada, veja o exemplo da comunidade [write-a-prd](https://claudemarketplaces.com/skills/mattpocock/skills/write-a-prd) (Matt Pocock no Claude Marketplace): ela transforma o Claude num especialista de PRD com formato de saída predefinido, perguntas de clarificação estruturadas e critérios de qualidade claros. O MAES faz o mesmo para a revisão do seu projeto, mas compilada a partir das regras específicas do seu domínio.
+
+**Quando usar a skin:**
+
+| Situação                          | Ação                                                        |
+| --------------------------------- | ----------------------------------------------------------- |
+| Antes de abrir um PR              | Rode `/maes-review` sobre o diff da branch                  |
+| Mudança em path crítico           | Rode `/maes-review` — guards relevantes entram no Scorecard |
+| Capturar uma regra nova           | Use `/maes-context-add` e rode `maes sync`                  |
+| Exploração sem escopo definido    | Fale com o Claude diretamente; ele vai sugerir a skin certa |
+| Pergunta rápida de esclarecimento | Sem skin — não vale o overhead de contexto                  |
+
+<Callout type="tip">
+  O [Claude
+  Marketplace](https://claudemarketplaces.com/skills/mattpocock/skills/write-a-prd)
+  tem exemplos de skins da comunidade. Vale explorar para calibrar o que uma
+  skill bem feita entrega — e comparar com as skins geradas pelo MAES para o seu
+  projeto.
+</Callout>
+
+<Callout type="info">
+  Os arquivos `.claude/commands/*.md` devem ser commitados no repositório. Isso
+  garante que todos do time tenham os mesmos slash commands ao clonar o projeto,
+  sem precisar rodar `maes sync` individualmente.
+</Callout>
+
+## Verificar o que o Claude Code está recebendo
+
+Para auditar o contexto que seria injetado para uma tarefa específica:
+
+```bash
+maes explain context --agent maes-review --task "implement user deletion"
+```
+
+Saída:
+
+```
+MAES Context Preview — agent: maes-review, task: "implement user deletion"
+
+Hot context (412t / 800t):
+  Layer 1 — Compliance: 8 assertions
+  Layer 2 — Security: 3 assertions (inferred)
+  Layer 3 — Contracts: 5 assertions
+
+Warm context (1847t / 4000t):
+  Layer 4 — Architecture: DEC-007, DEC-012 (relevância: alta)
+  Layer 5 — Domain: regras de cancelamento, soft delete (relevância: alta)
+  Layer 6 — Engineering: repository pattern, erros tipados (relevância: média)
+
+Guards ativos para este path:
+  src/services/** — contextual (verificar compliance antes de implementar)
+```
+
+## Usar MCP adicionalmente
+
+Para contexto dinâmico por tarefa (sem necessidade de recompilar), o MAES também expõe um MCP Server. CLAUDE.md e MCP coexistem — CLAUDE.md fornece o contexto base em toda sessão; MCP fornece contexto dinâmico selecionado por tarefa.
+
+### Configurar no Claude Code (VSCode)
+
+O Claude Code lê servidores MCP de projeto do arquivo `.mcp.json` na **raiz do repositório** (não de `.claude/settings.json`). O comando abaixo escreve esse arquivo (e também provisiona os demais clientes — `.vscode/mcp.json`, `.cursor/mcp.json`, `.continue/config.yaml`, Windsurf):
+
+```bash
+maes serve --write-mcp-config
+# Escreve .mcp.json + pré-aprova em .claude/settings.local.json
+# Recarregue a janela (Ctrl+Shift+P → Developer: Reload Window) para o servidor aparecer
+```
+
+Para configurar apenas o Claude Code sem alterar os outros targets:
+
+```bash
+maes serve --write-mcp-config claude-code
+```
+
+Para ver o que seria adicionado sem escrever nada:
+
+```bash
+maes serve --print-mcp-config claude-code
+```
+
+O bloco gerado é **portável** — comando `maes` (resolvido pelo PATH) e `serve` sem caminhos absolutos, pois o Claude Code sobe o servidor com cwd na raiz do projeto. Por isso o `.mcp.json` pode ser versionado e funciona em qualquer clone:
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+> **Configuração desatualizada?** Se o servidor não aparecer, execute `maes serve --print-mcp-config claude-code` para inspecionar o que seria gerado e `maes serve --write-mcp-config claude-code` para sobrescrever com a configuração correta.
+
+### Outros targets
+
+Para Claude Desktop ou Cursor, passe o target explicitamente:
+
+```bash
+maes serve --write-mcp-config claude-desktop
+maes serve --write-mcp-config cursor
+```
+
+### Ferramentas disponíveis via MCP
+
+Com o servidor ativo, o Claude Code pode chamar:
+
+- `maes_get_agent_context(agent_id, task)` — contexto compilado para aquela tarefa
+- `maes_check_guard(action, path, agent_id)` — verifica se uma ação é permitida
+- `maes_list_agents()` — lista os agentes disponíveis no projeto
+
+## Onde ir a seguir
+
+- Visão geral de todos os adapters — [Visão Geral das Integrações](/docs/integrations/overview)
+- Cursor em detalhe — [Cursor](/docs/integrations/cursor)
+- Usando agents em todos os IDEs — [Usando os Agents](/docs/guides/using-agents)

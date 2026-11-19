@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # mcp SDK (in the `all` extra, needed by the MCP tests) requires 3.10+.
+        python-version: ["3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: template/scripts/tools
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install (editable + dev + provider/MCP SDKs)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,all]"
+
+      - name: Run test suite
+        run: pytest -q
+
+  build-check:
+    name: build-check (wheel install + smoke)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: template/scripts/tools
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Install the built wheel in a clean virtualenv (isolated)
+        run: |
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/smoke/bin/python" -m pip install dist/*.whl
+
+      - name: Smoke test the installed artifact
+        run: |
+          BIN="$RUNNER_TEMP/smoke/bin"
+          which "$BIN/maes"
+          "$BIN/maes" --version
+          "$BIN/maes" --help
+          "$BIN/maes" blueprint list
+          "$BIN/maes" init --help
+          # import from a neutral cwd so we exercise the INSTALLED package, not the source tree
+          cd "$RUNNER_TEMP" && "$BIN/python" -c "import maes; print('installed at:', maes.__file__)"

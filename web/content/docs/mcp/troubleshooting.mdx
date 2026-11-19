@@ -1,0 +1,102 @@
+---
+title: MCP — Troubleshooting
+description: Cenários comuns ao integrar maes-mcp em Claude Desktop, Cursor, Continue, Windsurf e como diagnosticar.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+## Servidor MCP não aparece no cliente
+
+**Sintoma:** ícone de plug/MCP no cliente lista zero servidores ou não mostra `maes`.
+
+Checklist:
+
+1. `maes doctor` retorna OK?
+2. O arquivo de config do cliente existe? Gere com `maes serve --write-mcp-config`
+   (ex.: `.mcp.json` na raiz para Claude Code, `.vscode/mcp.json` para
+   VS Code/Copilot, `.cursor/mcp.json` para Cursor).
+3. O comando `maes serve` funciona no terminal isoladamente (a partir da raiz do repo)?
+4. No Claude Code, o servidor está aprovado? `maes serve --write-mcp-config claude-code`
+   pré-aprova em `.claude/settings.local.json`.
+5. Reinicie o cliente completamente — alguns só carregam MCPs no boot.
+
+## "maes: command not found" quando o cliente tenta iniciar
+
+**Causa:** o cliente roda em um shell que não tem `maes` no PATH (típico em
+GUIs no macOS/Windows).
+
+**Fix:** use o caminho absoluto no `command` (em vez do `maes` portável):
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "/Users/seu-user/.local/bin/maes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Descubra o caminho com `which maes` (Unix) ou `(Get-Command maes).Source`
+(PowerShell). Esse arquivo deixa de ser portável entre máquinas — não versione.
+
+## Cliente conecta mas não lista as tools
+
+**Causa provável:** o servidor não encontrou o `.maes/` — o cwd não é a raiz do
+repo, ou (em configs globais) faltou `--project-dir`.
+
+**Fix:** Em configs globais (Claude Desktop, Windsurf), fixe `--project-dir`
+apontando para a raiz do repo:
+
+```json
+{
+  "mcpServers": {
+    "maes-meu-projeto": {
+      "command": "maes",
+      "args": ["--project-dir", "/caminho/absoluto/para/seu-repo", "serve"]
+    }
+  }
+}
+```
+
+## Agent não consulta MCP mesmo com servidor conectado
+
+**Causa:** o agent não foi instruído a consultar. O adapter gerado pelo
+`maes sync` instrui — verifique se ele está atualizado e carregado.
+
+```bash
+maes sync
+```
+
+E verifique se o cliente carrega o adapter:
+
+- Claude Code → `CLAUDE.md` na raiz?
+- Cursor → `.cursor/rules/maes-context.mdc`?
+- Copilot → `.github/copilot-instructions.md`?
+
+## Tokens explodem mesmo com MCP
+
+**Causa:** o adapter está despejando contexto que deveria estar **só no MCP**.
+
+**Fix:** revise quais arquivos de `human/` o adapter inclui (configurável em
+`.maes/config.yaml`). Arquivos grandes/raramente usados devem ficar **só no
+MCP**, não no adapter.
+
+## Mudanças em `human/*.md` não aparecem no agent
+
+**Causa:** o adapter não foi recompilado.
+
+**Fix:**
+
+```bash
+maes sync
+```
+
+E reinicie a sessão do cliente para garantir que ele relê o adapter.
+
+## Próximos passos
+
+- [Setup MCP por cliente](/docs/mcp/setup-per-client)
+- [O que é MCP](/docs/mcp/what-is-mcp)
+- [`maes doctor`](/docs/cli/overview)

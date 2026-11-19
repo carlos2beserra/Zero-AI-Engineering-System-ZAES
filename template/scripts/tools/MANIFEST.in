@@ -1,0 +1,8 @@
+# Ensure the full template tree (agents, blueprints, bootstrap/context, ci,
+# github-actions, human context) ships in the sdist. Files without extensions and
+# nested directories inside each blueprint (bootstrap/, context/) are the fragile
+# points, so include everything under maes/templates recursively.
+recursive-include maes/templates *
+
+include LICENSE
+include README.md

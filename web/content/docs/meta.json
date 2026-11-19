@@ -1,0 +1,18 @@
+{
+  "title": "MAES Documentation",
+  "pages": [
+    "index",
+    "foundations",
+    "getting-started",
+    "architecture",
+    "agents",
+    "mcp",
+    "integrations",
+    "guides",
+    "cli",
+    "ci",
+    "reference",
+    "advanced",
+    "release-notes"
+  ]
+}

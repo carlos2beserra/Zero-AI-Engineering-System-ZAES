@@ -1,0 +1,179 @@
+---
+title: "Scripts de CI"
+description: "Referência dos scripts em scripts/ci/ — o que cada um faz, como é chamado e quais variáveis requer."
+---
+
+## Localização e estrutura
+
+Os scripts de CI estão em `scripts/ci/` no repositório MAES. Quando você executa `maes init`, esses scripts são copiados para `scripts/ci/` no seu projeto-alvo, junto com os workflows correspondentes em `.github/workflows/`.
+
+```
+scripts/ci/
+├── eval-pr.py               ← LLM-as-judge para PRs
+├── governance-report.py     ← dashboard de saúde do contexto
+├── collect-metrics.py       ← métricas de processo via GitHub API
+├── context-snapshot.py      ← métricas de synthesis/ por release
+├── detect-adr-triggers.py   ← detecta mudanças que precisam de ADR
+└── _provider.py             ← módulo compartilhado (provider LLM)
+```
+
+Todos os scripts seguem os mesmos princípios: stdlib first (GitHub API via `urllib`), graceful fallback quando a variável `ANTHROPIC_API_KEY` (usada apenas pelos scripts marcados como “Requer LLM”) não está disponível (exit 0, não falham o CI), e saída estruturada para integração com `GITHUB_STEP_SUMMARY`. O CLI `maes` em si não requer essa variável.
+
+## Tabela de referência rápida
+
+| Script                   | Chamado por                 | O que faz                                             | Requer LLM |
+| ------------------------ | --------------------------- | ----------------------------------------------------- | ---------- |
+| `eval-pr.py`             | `maes-eval.yml`             | Avalia diff do PR, posta resultado como comentário    | Sim        |
+| `governance-report.py`   | `maes-governance.yml`       | Dashboard de saúde do contexto (staleness, fill rate) | Não        |
+| `collect-metrics.py`     | `maes-metrics.yml`          | Métricas GitHub (cycle time, adoção MAES)             | Não        |
+| `context-snapshot.py`    | `maes-context-snapshot.yml` | Salva métricas de `synthesis/` em cada release        | Não        |
+| `detect-adr-triggers.py` | `maes-adr-detect.yml`       | Detecta mudanças arquiteturais no diff                | Não        |
+
+## `eval-pr.py` — LLM-as-judge para PRs
+
+Analisa o diff de um PR usando LLM como juiz e posta o resultado como comentário. O critério de avaliação é o contexto compilado pelo MAES — o juiz verifica se o código do PR segue as regras de compliance, segurança, arquitetura e padrões de engenharia.
+
+**Chamado por:** `maes-eval.yml` em todo PR aberto ou atualizado.
+
+**Variáveis requeridas:**
+
+| Variável            | Obrigatório             | Descrição              |
+| ------------------- | ----------------------- | ---------------------- |
+| `ANTHROPIC_API_KEY` | Sim (exit 0 se ausente) | Chave da API Anthropic |
+| `GH_TOKEN`          | Para postar comentário  | Token GitHub           |
+| `GITHUB_REPOSITORY` | Para postar comentário  | `owner/repo`           |
+| `PR_NUMBER`         | Para postar comentário  | Número do PR           |
+
+**Como rodar manualmente:**
+
+```bash
+git diff origin/main...HEAD > /tmp/pr.diff
+python scripts/ci/eval-pr.py --diff /tmp/pr.diff
+
+# Com output em formato comentário markdown
+python scripts/ci/eval-pr.py --diff /tmp/pr.diff --output comment
+```
+
+**Saída esperada:**
+
+```
+MAES Eval — PR #142
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Score: 11 / 14
+Verdict: good
+
+Compliance:       3/3  ✓
+Arquitetura:      3/3  ✓
+Padrões:          2/3  — falta tratamento de erro tipado em auth.service.ts
+Completude:       2/3  — testes de edge case ausentes
+Custo de tokens:  1/2
+
+Notas:
+  - Considere extrair a lógica de validação para helper reutilizável
+  - Adicionar teste para o caso de usuário com status "suspended"
+```
+
+## `governance-report.py` — Dashboard de saúde do contexto
+
+Audita o estado do `.maes/context/human/*.md` — quando cada arquivo foi modificado pela última vez, quantos tokens estimados tem, e se o staleness está crítico.
+
+**Chamado por:** `maes-governance.yml` toda segunda-feira às 9h30 UTC.
+
+**Variáveis requeridas:** nenhuma (usa apenas `git log` e sistema de arquivos).
+
+**Como rodar manualmente:**
+
+```bash
+python scripts/ci/governance-report.py
+
+# Output JSON para processamento
+python scripts/ci/governance-report.py --output json
+
+# Arquivar decisões antigas (> 180 dias sem modificação)
+python scripts/ci/governance-report.py --archive-decisions
+```
+
+**Saída esperada (markdown):**
+
+```
+MAES Governance Report — 2026-05-22
+
+Arquivo                      Modificado    Idade   Status    Tokens
+─────────────────────────────────────────────────────────────────────
+compliance.md                2026-05-10    12d     fresh     380t
+integrations.md              2026-04-28    24d     aging     210t
+decisions.md                 2026-03-15    68d     stale     1240t
+business-rules.md            2026-05-18    4d      fresh     890t
+principles.md                2026-05-01    21d     aging     430t
+
+Issues detectadas:
+  decisions.md: stale (68 dias) — considere revisar ou arquivar entradas antigas
+  decisions.md: tamanho elevado (1240t) — use --archive-decisions para compactar
+```
+
+O relatório é publicado no `GITHUB_STEP_SUMMARY` quando rodando em GitHub Actions.
+
+## `collect-metrics.py` — Métricas de processo
+
+Coleta métricas de processo via GitHub API: PRs mergeados, cycle time, taxa de adoção MAES (% de PRs com padrão de commit MAES), rework rate.
+
+**Chamado por:** `maes-metrics.yml` toda segunda-feira às 9h UTC.
+
+**Variáveis requeridas:**
+
+| Variável            | Obrigatório | Descrição                             |
+| ------------------- | ----------- | ------------------------------------- |
+| `GH_TOKEN`          | Sim         | Token GitHub com permissão de leitura |
+| `GITHUB_REPOSITORY` | Sim         | `owner/repo`                          |
+
+**Como rodar manualmente:**
+
+```bash
+python scripts/ci/collect-metrics.py --repo owner/repo --days 7
+
+# Últimos 30 dias em formato JSON
+python scripts/ci/collect-metrics.py --repo owner/repo --days 30 --output json
+
+# A partir de uma data específica
+python scripts/ci/collect-metrics.py --repo owner/repo --since 2026-05-01
+```
+
+**Saída esperada:**
+
+```
+MAES Metrics — 2026-05-15 a 2026-05-22
+
+PRs mergeados:          12
+Cycle time médio:       8.3h
+Rounds de revisão:      1.2 (média)
+Adoção MAES:            92%  (11/12 PRs com commit MAES)
+Taxa de retrabalho:     8%   (1/12 PRs reabertos)
+
+PRs sem padrão MAES:
+  #1233 — fix: sidebar rendering (@alice)
+```
+
+## `context-snapshot.py` — Snapshot por release
+
+Salva um snapshot do estado atual de `synthesis/` associado a uma release Git. Permite rastrear qual era o contexto compilado no momento em que cada versão foi lançada.
+
+**Chamado por:** `maes-context-snapshot.yml` em releases publicadas.
+
+**Como rodar manualmente:**
+
+```bash
+python scripts/ci/context-snapshot.py --tag v1.2.0
+python scripts/ci/context-snapshot.py --tag v1.2.0 --output-dir snapshots/
+```
+
+## `detect-adr-triggers.py`
+
+**`detect-adr-triggers.py`:** analisa o diff de um PR e identifica padrões que indicam mudança arquitetural — migrations SQL, mudanças em contratos de API, modificações de infraestrutura. Quando detecta, posta comentário no PR sugerindo registro em `decisions.md`.
+
+Nenhum dos dois usa LLM — análise por regex e heurísticas sobre o diff.
+
+## Onde ir a seguir
+
+- Workflows que chamam esses scripts — [GitHub Actions](/docs/ci/github-actions)
+- Referência completa do CLI — [Referência do CLI](/docs/cli/reference)
+- Configurar CI/CD passo a passo — [Configurando CI/CD](/docs/cli/maes-agent)

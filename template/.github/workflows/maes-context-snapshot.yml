@@ -1,0 +1,37 @@
+name: MAES Context Snapshot — Métricas de síntese por release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: Gerar métricas de contexto
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências MAES
+        run: pip install anthropic pyyaml
+
+      # Recompila o contexto para garantir que synthesis/ está atualizado no momento do release.
+      # Não requer ANTHROPIC_API_KEY — maes sync só roda o compiler pipeline.
+      - name: Recompilar contexto (maes sync)
+        run: python maes.py sync
+
+      - name: Gerar métricas do snapshot
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_STEP_SUMMARY: ${{ env.GITHUB_STEP_SUMMARY }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          python scripts/ci/context-snapshot.py --tag "$TAG"
+          echo "Snapshot de métricas gerado para $TAG"

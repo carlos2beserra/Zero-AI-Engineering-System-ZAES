@@ -1,0 +1,104 @@
+---
+title: "Integração com Windsurf"
+description: "Como o MAES gera o .windsurfrules e como configurar o contexto compilado para o Windsurf."
+---
+
+## O arquivo gerado pelo MAES
+
+O comando `maes sync` gera `.windsurfrules` na raiz do projeto. O Windsurf carrega este arquivo automaticamente em todo contexto de edição — no Chat, no Write Mode e no Cascade — sem necessidade de configuração adicional.
+
+Ter o arquivo `.windsurfrules` na raiz é suficiente para que o contexto MAES esteja disponível. Nenhum passo manual de configuração é necessário no Windsurf.
+
+## Estrutura do arquivo gerado
+
+O `.windsurfrules` segue uma estrutura similar ao CLAUDE.md, mas formatado para o que o Windsurf espera. O compilador MAES gera o arquivo com as seções de prioridade na mesma ordem:
+
+```markdown
+# MAES Context — [nome do projeto]
+# Gerado automaticamente por maes sync. Não editar diretamente.
+
+## Compliance e Segurança
+
+PII de usuários (CPF, endereço, dados de saúde) nunca deve aparecer em logs.
+Toda ação financeira exige audit trail antes de retornar resposta.
+Dados de cartão: apenas últimos 4 dígitos podem ser armazenados.
+
+## Contratos Externos
+
+A API de pagamentos tem rate limit de 100 req/s — usar backoff exponencial em retries.
+Webhooks devem responder em até 5 segundos.
+
+## Decisões Arquiteturais
+
+DEC-007: JWT com refresh token rotativo. Session-based auth descartado.
+DEC-012: eventos de domínio via BullMQ. Comunicação direta entre serviços proibida.
+
+## Regras de Negócio
+
+Usuários Free: limite de 100 req/hora. Retornar HTTP 429 com Retry-After.
+Pedidos em status "shipped" são imutáveis — não implementar cancelamento.
+
+## Padrões de Engenharia
+
+Repository pattern para acesso ao banco.
+Erros tipados por módulo: classes que estendem AppError em errors.ts.
+Conventional Commits: feat/fix/docs/chore/refactor/test/ci.
+
+## Guards de Path
+
+src/services/payments/**: aprovação de tech lead obrigatória antes de qualquer mudança.
+db/migrations/**: teste em staging antes de aplicar em produção.
+.env*: nunca commitar valores reais — apenas .env.example.
+```
+
+## Atualizar o contexto
+
+O fluxo é o mesmo dos outros adapters: edite a fonte e recompile.
+
+```bash
+# Editar a fonte de verdade
+nano .maes/context/human/decisions.md
+
+# Recompilar todos os adapters (incluindo .windsurfrules)
+maes sync
+
+# Commitar o arquivo atualizado
+git add .maes/context/human/decisions.md .windsurfrules
+git commit -m "docs(maes): registrar DEC-015 no contexto"
+```
+
+<Callout type="info">
+Commitar `.windsurfrules` garante que todo desenvolvedor do time tenha o mesmo contexto ao clonar o repositório, independente de ter o MAES instalado localmente.
+</Callout>
+
+## Configuração via MCP (se o Windsurf suportar)
+
+O Windsurf tem suporte crescente ao Model Context Protocol. Se a versão instalada suportar MCP, é possível configurar o MAES server para contexto dinâmico por tarefa, similar ao que é possível com Claude Code e Cursor.
+
+Verifique a documentação oficial do Windsurf para saber se a versão atual suporta configuração de MCP servers e qual o formato de configuração esperado — a interface para isso pode variar entre versões.
+
+Se o MCP estiver disponível no Windsurf, o comando para iniciar o server é:
+
+```bash
+maes serve
+```
+
+O server expõe as mesmas três ferramentas disponíveis para outros clientes MCP:
+- `maes_get_agent_context(agent_id, task)` — contexto compilado para a tarefa
+- `maes_check_guard(action, path)` — verificação de guardrail por path
+- `maes_list_agents()` — lista de agentes configurados
+
+## Commitar o arquivo gerado
+
+Sim — `.windsurfrules` deve ser commitado no repositório. Todo desenvolvedor que usar Windsurf no projeto receberá automaticamente o contexto compilado ao clonar o repositório.
+
+```bash
+git add .windsurfrules
+git commit -m "feat(maes): adicionar contexto compilado para Windsurf"
+```
+
+## Onde ir a seguir
+
+- Visão geral de todos os adapters — [Visão Geral das Integrações](/docs/integrations/overview)
+- Claude Code em detalhe — [Claude Code](/docs/integrations/claude-code)
+- Cursor em detalhe — [Cursor](/docs/integrations/cursor)

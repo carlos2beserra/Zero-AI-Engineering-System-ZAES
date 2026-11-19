@@ -1,0 +1,184 @@
+---
+title: "Governança e Staleness"
+description: "Como o MAES detecta contexto desatualizado, quem é responsável por cada camada e como o CI garante que as regras críticas estejam sempre atualizadas."
+---
+
+## O Problema de Staleness
+
+Contexto envelhece. Uma regra escrita há seis meses pode descrever uma realidade que não existe mais: a integração com o ERP mudou de endpoint, a regra de cancelamento ganhou uma exceção nova, o time adotou um novo padrão de nomenclatura. Se a IA ainda usa o contexto antigo, ela gera código baseado em premissas falsas.
+
+Staleness é mais perigoso do que ausência de contexto. Um arquivo vazio simplesmente não informa. Um arquivo desatualizado ativamente desinforma — e a IA vai seguir as instruções com confiança, porque não tem como saber que estão erradas.
+
+O MAES calcula um `staleness_score` para cada assertion e aplica políticas diferentes por layer, porque nem todo contexto tem o mesmo grau de urgência.
+
+## Como o Staleness Score é Calculado
+
+Cada assertion tem um `staleness_score` entre 0 e 1, calculado com base em dois fatores:
+
+**Fator 1 — Idade do arquivo fonte:** quantos dias se passaram desde o último commit que modificou o arquivo de contexto correspondente (via `git log`). Quanto mais dias, maior a contribuição para o score.
+
+**Fator 2 — Mudanças de código nas paths monitoradas:** cada assertion declara quais paths de código ela monitora. Se houve commits nos últimos 30 dias afetando essas paths, mas o arquivo de contexto não foi atualizado no mesmo período, o score sobe. Isso captura o cenário clássico: o código mudou, mas o contexto que descreve esse código não acompanhou.
+
+Os dois fatores são combinados em uma escala de 0 a 1:
+
+| Score     | Status   | Interpretação                                 |
+| --------- | -------- | --------------------------------------------- |
+| 0.0 – 0.3 | Fresh    | Atualizado recentemente, confiável            |
+| 0.3 – 0.6 | Aging    | Pode haver drift, mas não é urgente           |
+| 0.6 – 0.8 | Stale    | Provavelmente desatualizado, revisar em breve |
+| 0.8 – 1.0 | Critical | Certamente desatualizado                      |
+
+## Política por Layer
+
+O MAES aplica políticas distintas porque o custo de staleness varia com a criticidade da layer:
+
+**Layers 1-3 (Compliance, Security, Contracts) — FAIL no CI**
+
+Se qualquer assertion de Layer 1, 2 ou 3 tiver `staleness_score ≥ 0.8`, o comando `maes validate` retorna exit 1. O CI falha. O PR não pode ser mergeado até que alguém revise e atualize o arquivo de contexto correspondente.
+
+Isso é intencional: regras de compliance e contratos externos são exatamente o tipo de coisa que o negócio precisa ter certeza de que estão corretas. Se o `compliance.md` não foi tocado em meses enquanto o código evoluiu, alguém precisa verificar se as obrigações legais ainda estão sendo respeitadas.
+
+**Layers 4-5 (Architecture, Domain) — WARN**
+
+Assertions de Layer 4 e 5 com `staleness_score ≥ 0.8` geram um aviso no output de `maes validate`, mas não bloqueiam o CI. O desenvolvedor é notificado, mas pode escolher resolver depois.
+
+**Layer 6-7 (Engineering, Inferred) — Sem alerta automático**
+
+Padrões de engenharia e contexto inferido não geram alertas de staleness. Layer 7 é regenerada quando você invoca o agente externo `/maes-analyze` no seu cliente de IA (instalado por `maes init`).
+
+## OWNERSHIP.yaml
+
+O `OWNERSHIP.yaml` define quem é responsável por cada layer. Quando `maes validate` falha por staleness, o output inclui o owner responsável para que a equipe saiba quem contatar.
+
+```yaml
+layers:
+  compliance: "@security-team"
+  security: "@security-team"
+  contracts: "@platform-team"
+  architecture: "@tech-leads"
+  domain: "@product-team"
+  engineering: "@all-engineers"
+```
+
+O arquivo fica em `.maes/OWNERSHIP.yaml`. Os handles são usados apenas para identificação no output — o MAES não envia notificações diretamente, mas os handles ficam visíveis no output do CI para facilitar a triagem.
+
+Exemplo de output quando `maes validate` falha:
+
+```
+FAIL: staleness_score crítico em assertions de Layer 1 (Compliance)
+
+  Arquivo: .maes/context/human/compliance.md
+  Última modificação: 94 dias atrás
+  Score: 0.87
+  Owner: @security-team
+
+  Execute 'maes doctor' para ver todas as assertions afetadas.
+  Revise compliance.md, atualize se necessário, e execute 'maes sync'.
+```
+
+## maes doctor — Monitoramento de Saúde
+
+O comando `maes doctor` exibe o estado atual de saúde de todo o sistema de contexto:
+
+```bash
+maes doctor
+```
+
+Saída típica:
+
+```
+MAES Health Check — 2026-05-22
+
+Synthesis
+  guards.json           ✓ 12 guards ativos
+  anti-hallucination    ✓ 847 tokens (< 800 limit)
+  conflicts.json        ✓ sem conflitos UNRESOLVED
+  staleness.json        ✓ calculado em 2026-05-22
+
+Staleness por Layer
+  Layer 1 (Compliance)   score: 0.12  ✓ Fresh
+  Layer 2 (Security)     score: 0.18  ✓ Fresh
+  Layer 3 (Contracts)    score: 0.44  ~ Aging
+  Layer 4 (Architecture) score: 0.61  ! Stale
+  Layer 5 (Domain)       score: 0.29  ✓ Fresh
+  Layer 6 (Engineering)  score: 0.15  ✓ Fresh
+
+Warnings
+  ! Layer 4 (Architecture): staleness_score = 0.61
+    Arquivo: decisions.md — 47 dias sem modificação
+    Paths monitoradas com commits recentes: src/auth/, src/billing/
+    Sugestão: revisar se as decisões arquiteturais ainda descrevem a realidade
+```
+
+## maes validate — CI Gate
+
+O comando `maes validate` é o gate de CI. Ele verifica:
+
+1. Ausência de conflitos UNRESOLVED no `synthesis/conflicts.json`
+2. Hot context dentro do limite de 800 tokens
+3. Staleness crítico (≥ 0.8) em assertions de Layer 1-3
+
+```bash
+maes validate
+# Exit 0 → tudo ok
+# Exit 1 → falha, com mensagem descrevendo o problema
+```
+
+No GitHub Actions, o workflow típico chama `maes validate` antes de permitir o merge. O job fica assim:
+
+```yaml
+- name: Validate MAES context
+  run: maes validate
+```
+
+<Callout type="info">
+  `maes validate` não usa LLM — é puramente determinístico e não precisa de API
+  key para a validação de staleness e conflitos. A API key só é necessária se
+  você configurar evals no mesmo pipeline.
+</Callout>
+
+## Resolvendo Staleness
+
+O processo para resolver staleness é direto:
+
+**Passo 1 — Identificar o que está stale**
+
+```bash
+maes doctor
+```
+
+O output mostra qual layer está com score alto e qual arquivo precisa de revisão.
+
+**Passo 2 — Revisar o arquivo**
+
+Abra o arquivo indicado (por exemplo, `.maes/context/human/compliance.md`) e verifique se o conteúdo ainda descreve a realidade. Compare com o estado atual do código nas paths monitoradas.
+
+**Passo 3 — Atualizar se necessário**
+
+Se algo mudou, atualize o arquivo com o conteúdo correto. Se nada mudou e o arquivo ainda está correto, basta fazer um commit no arquivo para resetar o timer de staleness — o `git log` vai registrar uma nova data de modificação.
+
+**Passo 4 — Recompilar e validar**
+
+```bash
+maes sync      # recompila o contexto
+maes validate  # confirma que o CI vai passar
+```
+
+## Workflow Recomendado Pós-PR
+
+Após o merge de qualquer PR que modifique código relevante, o fluxo recomendado é:
+
+1. Verificar se o código alterado está coberto por assertions nos arquivos human/
+2. Se sim, revisar se as assertions ainda são verdadeiras dado o que mudou
+3. Atualizar o arquivo de contexto correspondente se necessário
+4. Executar `maes sync` para recompilar
+5. Executar `maes validate` para confirmar que o CI vai passar na próxima execução
+
+Esse ciclo evita o acúmulo de staleness ao longo do tempo. Contexto que é atualizado incrementalmente a cada PR nunca chega ao estado crítico — ao contrário de contexto que é ignorado por semanas e depois precisa de uma revisão demorada.
+
+<Callout type="warning">
+  Não use staleness como métrica de qualidade isolada. Um arquivo atualizado
+  hoje mas com conteúdo incorreto tem staleness_score = 0 mas é igualmente
+  perigoso. O staleness detecta arquivos que não foram revisados — a qualidade
+  do conteúdo é responsabilidade humana.
+</Callout>

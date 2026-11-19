@@ -1,0 +1,79 @@
+name: MAES Eval — Avaliação Automática de PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Necessário para postar comentários no PR
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  eval:
+    name: Avaliação de código
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r scripts/requirements.txt
+
+      - name: Gerar diff do PR
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          echo "Diff gerado: $(wc -l < /tmp/pr.diff) linhas"
+
+      - name: Encontrar task file referenciada no PR
+        id: find-task
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          TASK_REF=$(echo "$PR_TITLE $PR_BODY" | grep -oE 'TASK-[0-9]+' | head -1 || true)
+
+          if [ -n "$TASK_REF" ]; then
+            TASK_FILE=".maes/tasks/${TASK_REF}.md"
+            if [ -f "$TASK_FILE" ]; then
+              echo "task_file=$TASK_FILE" >> "$GITHUB_OUTPUT"
+              echo "Task encontrada: $TASK_FILE"
+            else
+              echo "task_file=" >> "$GITHUB_OUTPUT"
+              echo "Referência $TASK_REF encontrada mas arquivo não existe em .maes/tasks/"
+            fi
+          else
+            echo "task_file=" >> "$GITHUB_OUTPUT"
+            echo "Nenhuma referência TASK-NNN no título ou corpo do PR"
+          fi
+
+      - name: Executar avaliação MAES (advisory)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          TASK_ARG=""
+          TASK_FILE="${{ steps.find-task.outputs.task_file }}"
+          if [ -n "$TASK_FILE" ]; then
+            TASK_ARG="--task $TASK_FILE"
+          fi
+
+          python scripts/ci/eval-pr.py \
+            --diff /tmp/pr.diff \
+            $TASK_ARG \
+            --output comment \
+            --post-to-github
+
+      # MAES Eval é sempre advisory na V1 (não bloqueia merge).
+      # Code review autoritativo é responsabilidade de `/maes-review`.

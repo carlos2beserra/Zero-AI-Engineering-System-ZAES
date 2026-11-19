@@ -1,0 +1,658 @@
+---
+title: "Referência do CLI"
+description: "Referência completa de todos os comandos maes — sintaxe, flags, exemplos de uso e saída esperada."
+---
+
+## Setup
+
+### `maes init`
+
+Scaffold determinístico do `.maes/`. Cria a estrutura de diretórios, arquivos `human/*.md` com placeholders e instala os agentes externos (`/maes-analyze`, `/maes-context-add`) em cada cliente de IA detectado (Claude Code, Cursor, Copilot, Windsurf, Continue).
+
+```bash
+maes init
+```
+
+**O que cria:**
+
+```
+.maes/
+├── config.yaml
+├── OWNERSHIP.yaml
+└── context/
+    ├── human/
+    │   ├── compliance.md
+    │   ├── integrations.md
+    │   ├── decisions.md
+    │   ├── business-rules.md
+    │   └── principles.md
+    └── inferred/           ← vazio (preenchido pelo agente /maes-analyze)
+```
+
+Depois de `maes init`, rode o agente `/maes-analyze` no seu cliente de IA para popular `context/inferred/` e em seguida `maes sync` para compilar os adapters.
+
+---
+
+## Compiler
+
+### `maes sync`
+
+Roda o pipeline completo do compilador MAES e regera todos os adapters. Não usa LLM — é determinístico e pode rodar offline.
+
+```bash
+maes sync
+maes sync --verbose
+```
+
+**Flags:**
+
+| Flag        | Descrição                                     |
+| ----------- | --------------------------------------------- |
+| `--verbose` | Mostra cada estágio do pipeline com contagens |
+
+**Exit codes:** 0 em sucesso, 1 se há conflitos UNRESOLVED.
+
+**Saída com `--verbose`:**
+
+```
+MAES Compiler Pipeline
+──────────────────────────────────────────────────
+Stage 1/7: INGEST
+  Reading context/human/compliance.md...
+  Reading context/human/integrations.md...
+  Reading context/human/decisions.md...
+  Reading context/human/business-rules.md...
+  Reading context/human/principles.md...
+  Reading context/inferred/gaps.json...
+  Total: 47 raw assertions
+
+Stage 2/7: NORMALIZE
+  47 assertions normalized
+
+Stage 3/7: DEDUPLICATE
+  2 duplicates removed → 45 unique assertions
+
+Stage 4/7: LAYER
+  Layer 1 (Compliance): 8 assertions
+  Layer 2 (Security): 4 assertions (inferred)
+  Layer 3 (Contracts): 5 assertions
+  Layer 4 (Architecture): 12 assertions
+  Layer 5 (Domain): 10 assertions
+  Layer 6 (Engineering): 6 assertions
+
+Stage 5/7: CONFLICT
+  No UNRESOLVED conflicts detected.
+
+Stage 6/7: COMPILE
+  Hot context: 412t / 800t (52%)
+  Warm context: 1847t / 4000t (46%)
+  Guards: 8 (3 enforcement, 5 contextual)
+
+Stage 7/7: ADAPTERS
+  Writing CLAUDE.md...
+  Writing .cursor/rules/maes-context.mdc...
+  Writing .continue/rules/maes-context.md...
+  Writing .windsurfrules...
+  Writing .github/copilot-instructions.md...
+  Writing .maes/synthesis/assertions.json...
+  Writing .maes/synthesis/guards.json...
+  Writing .maes/synthesis/staleness.json...
+
+✓ Sync complete — 45 assertions, 8 guards
+```
+
+---
+
+### `maes validate`
+
+Gate de CI. Mais restritivo que `sync` — falha se houver conflitos UNRESOLVED **ou** se o staleness de layers 1-3 atingir 0.8 ou mais.
+
+```bash
+maes validate
+```
+
+**Exit codes:** 0 se válido, 1 se conflitos UNRESOLVED ou staleness crítico em layers 1-3.
+
+**Saída de falha:**
+
+```
+MAES Validate
+──────────────────────────────────────────────────
+Verificando conflitos...    ✓ Nenhum conflito UNRESOLVED
+Verificando staleness...    FALHOU
+
+  compliance.md: staleness 0.87 (threshold: 0.80)
+  Arquivo não foi atualizado em 72 dias.
+  Layers 1-3 exigem atualização regular.
+
+exit 1
+```
+
+---
+
+## Analysis
+
+### `/maes-analyze` (agente externo)
+
+A análise por LLM do codebase roda como agente externo instalado por `maes init` em cada cliente de IA detectado. A forma de invocação depende do cliente:
+
+| Cliente               | Como invocar                                      |
+| --------------------- | ------------------------------------------------- |
+| Claude (Desktop/Code) | `/maes-analyze` (slash command)                   |
+| GitHub Copilot        | `/maes-analyze` (slash command)                   |
+| Cursor                | `@maes-analyze` (@ mention)                       |
+| Continue              | auto-loaded — apenas descreva a tarefa de análise |
+| Windsurf Cascade      | auto-loaded — apenas descreva a tarefa de análise |
+
+O agente roda no provider do próprio cliente de IA. Ele varre o codebase, infere stack/módulos/padrões/erros prováveis e escreve em `.maes/context/inferred/`:
+
+| Arquivo           | Conteúdo                                                                          |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `gaps.json`       | `ai_likely_mistakes`, `behavior_contracts`, `warning_antipatterns`, `constraints` |
+| `patterns.json`   | `notable_patterns`, `naming_conventions`                                          |
+| `data-model.json` | `special_fields` com semântica                                                    |
+| `stack.json`      | snapshot da stack tecnológica                                                     |
+| `modules.json`    | inventário de módulos / serviços                                                  |
+
+Depois que o agente termina, rode `maes sync` para recompilar os adapters com o contexto inferido atualizado.
+
+<Callout type="info">
+  O agente preserva snapshots em `.maes/context/inferred/.history/` (últimos 5
+  por arquivo) para detectar regressões de output do LLM entre execuções.
+</Callout>
+
+---
+
+## Context
+
+O contexto humano do MAES não é apenas para regras de negócio — qualquer coisa que um agente de IA precisa saber para gerar código, revisar PRs ou sugerir completions pertence ao `.maes`. Isso inclui regras de ferramentas, convenções de git, políticas de time e decisões de toolchain.
+
+**O que vai onde:**
+
+| Tipo de regra                                              | Arquivo             | Layer |
+| ---------------------------------------------------------- | ------------------- | ----- |
+| Regras de negócio, invariantes de domínio                  | `business-rules.md` | L5    |
+| Ferramentas obrigatórias (SonarLint, pre-commit, linters)  | `principles.md`     | L6    |
+| Convenções de git (Conventional Commits, branch naming)    | `principles.md`     | L6    |
+| Padrões de code review (nº de aprovações, CODEOWNERS)      | `principles.md`     | L6    |
+| Coverage mínimo, thresholds de qualidade                   | `principles.md`     | L6    |
+| Decisões de CI/CD e toolchain (GitHub Actions vs X)        | `decisions.md`      | L4    |
+| Contratos com sistemas externos (APIs, filas, rate limits) | `integrations.md`   | L3    |
+| Compliance, auth, PII, regulatório                         | `compliance.md`     | L1-L2 |
+
+Você pode preencher esses arquivos manualmente ou usar o agente externo `/maes-context-add`.
+
+### `/maes-context-add` (agente externo)
+
+Slash command instalado por `maes init` em cada cliente de IA detectado. Extrai regras de texto livre, arquivos ou docs existentes (CLAUDE.md legado, ADRs, RFCs) e roteia automaticamente para o arquivo `human/*.md` correto com base na camada de prioridade.
+
+Invoque conforme o cliente (mesma matriz de `maes-analyze`): `/maes-context-add` em Claude e Copilot, `@maes-context-add` em Cursor, ou descreva a tarefa em Continue/Windsurf.
+
+O agente faz:
+
+- Extração de regras via LLM (provider/modelo do próprio cliente — não precisa configurar nada no MAES)
+- Roteamento por camada (compliance / contracts / decisions / business-rules / principles)
+- Dedup semântico contra assertions existentes
+- Escrita em `.maes/context/human/*.md`
+
+Depois que o agente terminar, rode `maes sync` para recompilar os adapters.
+
+---
+
+## Agents
+
+### `maes agent list`
+
+Lista todos os agents do catálogo opcional e indica quais estão ativos no projeto.
+
+```bash
+maes agent list
+```
+
+**Saída esperada:**
+
+```
+Optional agents (catalogue):
+
+  ✔ active    dev-workflow           Dev Workflow
+               Gerencia o fluxo completo de desenvolvimento — branch, commit, push e PR passo a passo
+
+Activate:   maes agent add <id>
+Deactivate: maes agent remove <id>
+```
+
+---
+
+### `maes agent add`
+
+Adiciona um agent opcional ao projeto, copiando o YAML do catálogo para `.maes/agents/`, e roda `maes sync` automaticamente para gerar o slash command correspondente.
+
+```bash
+maes agent add dev-workflow            # adiciona e roda sync
+maes agent add dev-workflow --skip-sync    # adiciona sem rodar sync
+```
+
+**Flags:**
+
+| Flag          | Descrição                                              |
+| ------------- | ------------------------------------------------------ |
+| `--skip-sync` | Adiciona o agent sem rodar `maes sync` automaticamente |
+
+**Saída esperada:**
+
+```
+✔ Agent 'dev-workflow' added to .maes/agents/
+
+Running maes sync...
+✓ Sync complete
+  Assertions: 127
+  Guards:     8
+  Adapters:   claude, cursor, windsurf, copilot
+```
+
+Após o sync, o slash command `/dev-workflow` fica disponível no Claude Code e os equivalentes são gerados para os outros IDEs configurados.
+
+---
+
+### `maes agent remove`
+
+Remove um agent opcional do projeto e roda `maes sync` para revogar o slash command.
+
+```bash
+maes agent remove dev-workflow            # remove e roda sync
+maes agent remove dev-workflow --skip-sync    # remove sem rodar sync
+```
+
+<Callout type="warn">
+  Agents core (`maes-review`, `maes-analyze`, `maes-context-add`,
+  `maes-eval`) não podem ser removidos — são instalados por `maes init` e
+  sempre estão ativos. Tentativas de removê-los resultam em erro.
+</Callout>
+
+---
+
+## Audit
+
+### `maes audit`
+
+Auditoria qualitativa do contexto compilado. Roda heurísticas determinísticas sobre o `synthesis/` e gera um relatório com score 0-100, grade (`HEALTHY` / `NEEDS_ATTENTION` / `CRITICAL`) e ações recomendadas. Não requer API key no modo padrão.
+
+```bash
+maes audit                        # relatório completo, salva .maes/audit/
+maes audit --verbose              # mostra detalhes de cada finding
+maes audit --format json          # JSON puro para integração com outras ferramentas
+maes audit --fail-on-warning      # exit 1 em WARNING (padrão: só CRITICAL causa exit 1)
+```
+
+**Flags:**
+
+| Flag                | Descrição                                                          |
+| ------------------- | ------------------------------------------------------------------ |
+| `--verbose`, `-v`   | Mostra todos os findings, incluindo OK                             |
+| `--format`          | `text` (padrão), `json` ou `both` — text+json em stdout e arquivos |
+| `--fail-on-warning` | Exit 1 em qualquer WARNING (padrão: só CRITICAL falha)             |
+
+**Exit codes:** 0 se sem CRITICAL (ou sem WARNING quando `--fail-on-warning`), 1 caso contrário.
+
+**Checks determinísticos:**
+
+| Check                     | Severidade | Trigger                                              |
+| ------------------------- | ---------- | ---------------------------------------------------- |
+| Conflitos UNRESOLVED      | CRITICAL   | `unresolved_count > 0`                               |
+| Layer 1 sem assertions    | CRITICAL   | L1 vazio                                             |
+| Layer 2 sem assertions    | CRITICAL   | L2 vazio                                             |
+| Staleness crítico L1-L3   | CRITICAL   | `staleness_score ≥ 0.8` em L1-3                      |
+| Hot context saturado      | WARNING    | tokens usados > 90% do cap de 800                    |
+| L3 stale em breve         | WARNING    | assertion L3 stale em < 30 dias                      |
+| L4 concentrado            | WARNING    | assertions L4 > 25 (routing drift)                   |
+| L2 coverage baixa         | WARNING    | assertions L2 < 2                                    |
+| Templates não preenchidos | WARNING    | entradas `[ex:]` em `human/*.md`                     |
+| Adapters sem guard        | WARNING    | CLAUDE.md ou .windsurfrules sem guard de enforcement |
+| Guard global inform       | INFO       | guard com `paths=["**"]` e `policy=inform`           |
+| Assertions sem owner      | INFO       | `owner` vazio                                        |
+| Claims curtos             | INFO       | claim com < 30 chars                                 |
+
+**Score e grade:**
+
+```
+score = 100 − 20×CRITICAL − 5×WARNING − 1×INFO
+HEALTHY         ≥ 80
+NEEDS_ATTENTION ≥ 60
+CRITICAL        < 60
+```
+
+**Saída esperada:**
+
+```
+MAES Audit Report — minha-api
+══════════════════════════════════════════════════════
+Gerado: 2026-05-24 | Score: 73/100 | NEEDS_ATTENTION (73/100)
+Assertions: 87 | Guards: 5 | Hot context: 754/800 tokens
+
+── Conflitos ──────────────────────────────────────────
+  ✓ Sem conflitos UNRESOLVED
+
+── Cobertura ──────────────────────────────────────────
+  ✗  [WARNING]    Layer 2 (security): apenas 1 assertion(s)
+  ✗  [WARNING]    14 entradas placeholder [ex:] não preenchidas em human/*.md
+
+── Hot Context ────────────────────────────────────────
+  ✗  [WARNING]    Hot context próximo da saturação (94.2%)
+
+── Qualidade das Assertions ───────────────────────────
+  ✗  [WARNING]    L4 (architecture) concentra 29/87 assertions
+
+── Guards ─────────────────────────────────────────────
+  ✗  [WARNING]    Adapter(s) sem guard de enforcement: CLAUDE.md, .windsurfrules
+  ·  [INFO]       1 guard(s) com policy=inform em escopo global ['**']
+
+── Ações Recomendadas ─────────────────────────────────
+  1. [WARNING]    Revisar claims do hot context para compressão
+  2. [WARNING]    Revisar assertions L4 e mover regras de processo para L5/L6
+  3. [WARNING]    Adicionar rules de auth, credential handling, PII e secrets em L2
+  4. [WARNING]    Preencher ou remover seções de exemplo em human/*.md
+
+Relatório salvo em: .maes/audit/latest-report.md
+Relatório salvo em: .maes/audit/latest-report.json
+```
+
+**Arquivos gerados:**
+
+| Arquivo                          | Conteúdo                                                       |
+| -------------------------------- | -------------------------------------------------------------- |
+| `.maes/audit/latest-report.md`   | Relatório legível, sem ANSI, para artifact CI e revisão humana |
+| `.maes/audit/latest-report.json` | JSON estruturado com `score`, `grade`, `findings[]`, `summary` |
+
+---
+
+### `maes explain`
+
+Audita decisões do compilador e estado do contexto. Cinco subcomandos disponíveis.
+
+```bash
+maes explain status
+maes explain guard --path "src/services/payments/**"
+maes explain conflict --id CONFLICT-001
+maes explain context --agent backend --task "implement user deletion"
+maes explain savings --agent backend --task "implement user deletion"
+```
+
+**`maes explain status` — saúde geral:**
+
+```
+MAES Status
+──────────────────────────────────────────────────
+Assertions:    45 total (8 hot, 37 warm)
+Guards:        8 (3 enforcement, 5 contextual)
+Conflitos:     0 UNRESOLVED, 2 RESOLVED
+
+Staleness por layer:
+  Layer 1 (Compliance):    0.12  ✓ fresh
+  Layer 2 (Security):      0.09  ✓ fresh
+  Layer 3 (Contracts):     0.31  ✓ fresh
+  Layer 4 (Architecture):  0.55  ~ aging
+  Layer 5 (Domain):        0.28  ✓ fresh
+  Layer 6 (Engineering):   0.42  ✓ fresh
+
+Adapters:
+  CLAUDE.md                  ✓ sincronizado
+  .cursor/rules/maes-context.mdc  ✓ sincronizado
+  .windsurfrules             ✓ sincronizado
+  .github/copilot-instructions.md  ✓ sincronizado
+```
+
+**`maes explain guard` — detalhes de um guard:**
+
+```
+Guard: src/services/payments/**
+──────────────────────────────────────────────────
+Tipo:    enforcement
+Ação:    Aprovar com tech lead antes de qualquer mudança
+
+Origem:
+  Arquivo: .maes/context/human/compliance.md
+  Linha: 24
+  Regra: "Modificações no módulo de pagamentos requerem revisão de segurança
+          e aprovação do tech lead antes do merge."
+
+Layer: 1 (Compliance)
+```
+
+**`maes explain context` — preview do contexto injetado:**
+
+```
+MAES Context Preview
+Agent: backend | Task: "implement user deletion"
+──────────────────────────────────────────────────
+Hot context (412t / 800t):
+  Layer 1: compliance.md — 8 assertions
+  Layer 2: security (inferred) — 4 assertions
+  Layer 3: integrations.md — 5 assertions
+
+Warm context (1847t / 4000t):
+  Layer 4: decisions.md — DEC-007, DEC-012 (relevância: alta)
+  Layer 5: business-rules.md — soft delete, GDPR (relevância: alta)
+  Layer 6: principles.md — repository pattern, erros tipados (relevância: média)
+
+Guards ativos:
+  src/services/** — contextual (verificar compliance)
+```
+
+**`maes explain savings` — economia de tokens vs contexto manual:**
+
+Compara os tokens que o MAES injeta com dois baselines: os arquivos-fonte que cobrem os mesmos domínios (inclusão manual direcionada) e o codebase inteiro (vibe coding). Útil para demonstrar ROI em codebases grandes onde o contexto não-estruturado estoura o limite de 128K.
+
+```bash
+# Com agente e tarefa específicos
+maes explain savings --agent backend --task "implement user deletion"
+
+# Sem argumentos — usa o primeiro agente disponível
+maes explain savings
+```
+
+**Flags:**
+
+| Flag          | Descrição                                                   |
+| ------------- | ----------------------------------------------------------- |
+| `--agent ID`  | Agent ID (padrão: primeiro disponível)                      |
+| `--task TEXT` | Descrição da tarefa (influencia o warm context selecionado) |
+
+**Saída esperada:**
+
+```
+MAES Context Savings — agent: backend, task: "implement user deletion"
+────────────────────────────────────────────────────────────────
+
+Fonte de contexto                Tokens      % de 128K
+────────────────────────────────────────────────────────
+MAES hot context (L1-3)           412t          0.3%
+MAES warm context (L4-6)        1,847t          1.4%
+MAES total                      2,259t          1.8%
+
+Baseline: arquivos relevantes  41,200t         32.2%  ← 38 arquivos (inclusão manual direcionada)
+Baseline: codebase completo   318,000t        248.4%  ← 412 arquivos (vibe coding)  ⚠ estoura 128K
+
+Economia vs inclusão manual:   18× menos tokens
+Economia vs codebase completo: 141× menos tokens
+
+Context budget usado:  2,259 / 128,000 tokens  (1.8%)
+Sobra para o código:  125,741 tokens  (~6,287 linhas)
+```
+
+O alerta `⚠ estoura 128K` indica que o codebase completo não caberia em um contexto de 128K tokens — situação típica em projetos médios ou grandes onde o vibe coding sem estrutura começa a degradar a qualidade das respostas ou força o dev a selecionar arquivos manualmente a cada sessão.
+
+---
+
+## Eval
+
+### `/maes-eval` (Agente Externo)
+
+LLM-as-judge: compara o output de um agente com e sem o contexto MAES ativo em cenários predefinidos. Invoke no seu cliente de IA:
+
+```
+/maes-eval
+/maes-eval --scenario auth-001
+/maes-eval --agent maes-review
+```
+
+**Limite recomendado:** ~10 cenários por sessão (cada cenário usa 3 chamadas de LLM). Para suites maiores, filtre por `--agent` ou execute em lotes.
+
+**Saída (no chat do cliente de IA):**
+
+```
+MAES Eval
+──────────────────────────────────────────────────
+Cenários: 5 total
+
+  auth-001     delta: +0.42   PASS
+  payments-001 delta: +0.35   PASS
+  domain-001   delta: +0.18   PASS
+  security-001 delta: +0.51   PASS
+  infra-001    delta: -0.05   FAIL (sem delta positivo)
+
+Resultado: 4/5 cenários com delta positivo (80%)
+Threshold: 70%
+
+✓ PASS — contexto MAES melhora qualidade do output em 80% dos cenários
+```
+
+---
+
+## Server
+
+### `maes serve`
+
+Inicia o MCP server. Expõe três ferramentas via Model Context Protocol. Lê de `.maes/synthesis/` — não requer API key em runtime.
+
+```bash
+maes serve
+```
+
+**Ferramentas expostas:**
+
+| Ferramenta               | Assinatura                                                 | Descrição                                          |
+| ------------------------ | ---------------------------------------------------------- | -------------------------------------------------- |
+| `maes_get_agent_context` | `(agent_id, task) → context`                               | Retorna hot + warm context compilado para a tarefa |
+| `maes_check_guard`       | `(action, path) → ALLOWED \| REQUIRES_APPROVAL \| BLOCKED` | Verifica guardrail por path                        |
+| `maes_list_agents`       | `() → agents[]`                                            | Lista agentes disponíveis e suas configurações     |
+
+**Saída:**
+
+```
+MAES MCP Server
+──────────────────────────────────────────────────
+Lendo synthesis/...
+  assertions.json: 45 assertions
+  guards.json: 8 guards
+  anti-hallucination.json: 12 regras
+
+MCP server iniciado.
+Ferramentas disponíveis:
+  maes_get_agent_context
+  maes_check_guard
+  maes_list_agents
+
+Aguardando conexões...
+```
+
+**Clientes suportados:** Claude Code, Claude Desktop, Cursor, GitHub Copilot (VS Code 1.99+).
+
+### `maes serve --write-mcp-config`
+
+Escreve a configuração do MCP server nos arquivos de cada cliente. Sem argumento, provisiona **todos os clientes suportados** de uma vez:
+
+```bash
+# Claude Code + VS Code/Copilot + Cursor + Continue + Windsurf de uma vez
+maes serve --write-mcp-config
+
+# Targets específicos
+maes serve --write-mcp-config claude-code      # .mcp.json (raiz) + pré-aprova em settings.local.json
+maes serve --write-mcp-config vscode           # .vscode/mcp.json (copilot é alias)
+maes serve --write-mcp-config cursor-project   # .cursor/mcp.json (project-level)
+maes serve --write-mcp-config continue         # .continue/config.yaml
+maes serve --write-mcp-config windsurf         # ~/.codeium/windsurf/mcp_config.json (global)
+maes serve --write-mcp-config cursor           # ~/.cursor/mcp.json (global — afeta todos os projetos)
+maes serve --write-mcp-config claude-desktop   # arquivo global do Claude Desktop
+```
+
+**Targets e arquivos gerados:**
+
+| Target           | Arquivo                                                                                                       | Escopo  | Formato                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- | ------- | ------------------------- |
+| `claude-code`    | `.mcp.json` (raiz do repo)                                                                                    | Project | `mcpServers`              |
+| `vscode` / `copilot` | `.vscode/mcp.json`                                                                                        | Project | `servers` + `type: stdio` |
+| `cursor-project` | `.cursor/mcp.json`                                                                                            | Project | `mcpServers`              |
+| `continue`       | `.continue/config.yaml`                                                                                       | Project | `mcpServers` (lista YAML) |
+| `windsurf`       | `~/.codeium/windsurf/mcp_config.json`                                                                         | Global  | `mcpServers`              |
+| `cursor`         | `~/.cursor/mcp.json`                                                                                          | Global  | `mcpServers`              |
+| `claude-desktop` | `~/.claude/claude_desktop_config.json` (Mac/Linux) ou `%APPDATA%\Claude\claude_desktop_config.json` (Windows) | Global  | `mcpServers`              |
+
+Os configs de **projeto** são portáveis (`command: maes`, `args: ["serve"]` — sem caminhos absolutos, podem ser versionados); os **globais** fixam `--project-dir`. O comando cria backup automático do arquivo existente (`.bak`) antes de sobrescrever.
+
+### `maes serve --print-mcp-config`
+
+Imprime a configuração sem escrever em disco — útil para inspecionar antes de aplicar:
+
+```bash
+maes serve --print-mcp-config vscode
+```
+
+```json
+{
+  "servers": {
+    "maes-meu-projeto": {
+      "type": "stdio",
+      "command": "maes",
+      "args": ["serve"]
+    }
+  }
+}
+
+# Merge the 'maes-meu-projeto' entry into servers in:
+# /path/to/projeto/.vscode/mcp.json
+```
+
+### `maes doctor`
+
+Diagnóstico completo do ambiente MAES: Python, dependências, API keys, estrutura `.maes/`, synthesis e adapters.
+
+```bash
+maes doctor
+```
+
+**Saída:**
+
+```
+MAES Doctor
+──────────────────────────────────────────────────
+Python 3.13.x          ✓
+pyyaml 6.0.2           ✓
+mcp installed          ✓ (maes serve disponível)
+
+LLM SDKs (opcionais — usados pelos scripts de CI no GitHub Actions)
+  anthropic 0.52.0     ✓
+  ANTHROPIC_API_KEY    ✓ configurada
+  GITHUB_TOKEN         ~ não configurada (opcional)
+
+.maes/config.yaml      ✓ encontrado
+.maes/OWNERSHIP.yaml   ✓ encontrado
+.maes/context/human/   ✓ 5 arquivos
+
+synthesis/assertions.json  ✓ 45 assertions
+synthesis/guards.json      ✓ 8 guards
+synthesis/staleness.json   ✓
+
+Adapters:
+  CLAUDE.md                         ✓
+  .cursor/rules/maes-context.mdc    ✓
+  .windsurfrules                    ✓
+  .github/copilot-instructions.md   ✓
+
+✓ Tudo OK — nenhum problema encontrado
+```
+
+## Onde ir a seguir
+
+- Scripts de CI complementares — [Scripts de CI](/docs/ci/scripts)
+- GitHub Actions — [GitHub Actions](/docs/ci/github-actions)
+- Configurar CI/CD passo a passo — [Configurando CI/CD](/docs/cli/maes-agent)

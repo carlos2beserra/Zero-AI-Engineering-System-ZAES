@@ -1,0 +1,171 @@
+---
+title: "CLI MAES — Visão Geral"
+description: "O CLI determinístico do MAES — interface de operação das camadas Compiler, Documentation e Governance."
+---
+
+## CLI determinístico — a interface de operação do MAES
+
+O CLI `maes` é a interface de operação das camadas determinísticas do MAES — Compiler, Documentation e Governance. Ele não é "o produto", mas sim a ferramenta que dispara, compila e audita essas camadas — ver [arquitetura completa](/docs/architecture/overview).
+
+**Zero LLM no caminho.** Tudo que o CLI faz é reprodutível, auditável e roda offline. A inteligência (LLM) vive na [Agent Layer](/docs/agents/catalog) — slash commands externos instalados por `maes init`.
+
+```bash
+# Instalação recomendada (Unix/Mac)
+curl -fsSL https://raw.githubusercontent.com/Maxxidata/maxxi-ai-engineering-system/main/install.sh | bash
+
+# Windows
+pip install pipx
+pipx install "git+https://github.com/Maxxidata/maxxi-ai-engineering-system.git#subdirectory=template/scripts/tools"
+```
+
+## Todos os comandos
+
+| Comando         | Quando usar                                                               |
+| --------------- | ------------------------------------------------------------------------- |
+| `maes init`     | Scaffold do `.maes/` + instala agentes externos no cliente de IA          |
+| `maes sync`     | Recompila o contexto e regera todos os adapters                           |
+| `maes validate` | Verifica se o contexto é válido para uso em CI                            |
+| `maes audit`    | Auditoria determinística do contexto compilado (score 0–100)              |
+| `maes doctor`   | Diagnostica problemas de instalação e configuração                        |
+| `maes explain`  | Audita decisões do compilador e estado do contexto                        |
+| `maes agent`    | Lista / adiciona / remove agentes opcionais do catálogo                   |
+| `maes serve`    | Inicia o MCP server para clientes MCP                                     |
+| `maes version`  | Exibe versão do CLI e status de upgrade do projeto                        |
+| `maes upgrade`  | Migra `.maes/` do projeto para a versão atual do CLI                      |
+
+**Agentes externos** (instalados por `maes init` em Claude Code, Cursor, Copilot, Windsurf, Continue):
+
+| Slash command          | O que faz                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `/maes-analyze`        | Analisa o codebase e popula `.maes/context/inferred/` (gaps, padrões, módulos, stack, data model) |
+| `/maes-context-add` | Extrai regras de texto/arquivos/docs e roteia para o `human/*.md` correto, com dedup semântico    |
+| `/maes-eval`           | LLM-as-judge: mede delta de qualidade com vs sem contexto MAES em cenários predefinidos           |
+
+## Fluxo de uso típico
+
+O fluxo padrão para um projeto novo e para o dia a dia do time:
+
+```
+Primeira vez:
+  maes init                  → .maes/ criado + agentes instalados no cliente de IA
+  /maes-analyze (no cliente) → context/inferred/ populado
+  maes sync                  → adapters compilados
+
+Dia a dia:
+  editar .maes/context/human/*.md → maes sync → commitar tudo
+  (ou usar /maes-context-add e depois maes sync)
+
+CI:
+  maes validate → exit 0 se válido, exit 1 se conflitos ou staleness crítico
+
+Diagnóstico:
+  maes doctor → verificar instalação
+  maes explain status → ver estado geral do contexto
+```
+
+### Init: primeira vez em um projeto novo
+
+```bash
+maes init
+# Pergunta: nome do projeto, linguagem/stack principal
+# Cria: .maes/ com human/*.md em placeholder, OWNERSHIP.yaml, config.yaml
+# Instala agentes externos (/maes-analyze, /maes-context-add) em cada cliente de IA detectado
+```
+
+Depois de `maes init`, abra seu cliente de IA e invoque o agente `maes-analyze` — use `/maes-analyze` (slash command) no Claude Code; nos demais clientes (Cursor, Copilot, Continue, Windsurf) o contexto do agente é aplicado automaticamente, então basta descrever a tarefa. Ele varre o codebase usando o provider do próprio cliente e escreve `.maes/context/inferred/`. Em seguida rode `maes sync` para compilar os adapters.
+
+### Sync: o comando mais usado
+
+```bash
+maes sync           # recompila tudo
+maes sync --verbose # mostra cada estágio do pipeline com detalhes
+```
+
+O `sync` roda o pipeline completo de 7 estágios: INGEST → NORMALIZE → DEDUPLICATE → LAYER → CONFLICT → COMPILE → ADAPTERS. Não usa LLM — é determinístico e pode rodar offline. Termina com exit 1 se houver conflitos UNRESOLVED nos arquivos de contexto.
+
+### Validate: o gate de CI
+
+```bash
+maes validate
+# exit 0: contexto válido
+# exit 1: conflitos UNRESOLVED ou staleness ≥ 0.8 em layers 1-3
+```
+
+O `validate` é mais restritivo que o `sync`. Enquanto o `sync` termina com erro apenas em conflitos UNRESOLVED, o `validate` também falha se camadas críticas (compliance, segurança, contratos) estiverem muito desatualizadas — staleness ≥ 0.8 significa que a maioria dos arquivos da camada não foi atualizada recentemente.
+
+### Doctor: diagnóstico
+
+```bash
+maes doctor
+```
+
+Verifica: Python ≥ 3.10, dependências instaladas, existência do `.maes/`, integridade do `synthesis/`, presença dos adapters gerados. SDKs de LLM e API keys são opcionais — usados apenas pelos scripts de CI no GitHub Actions.
+
+### Explain: auditoria
+
+```bash
+maes explain status
+# saúde geral: assertions totais, guards, conflitos, staleness por layer
+
+maes explain guard --path "src/services/payments/**"
+# por que este guard existe? qual regra o originou?
+
+maes explain conflict --id CONFLICT-001
+# detalhes de um conflito: quais assertions conflitam, como resolver
+
+maes explain context --agent backend --task "implement user deletion"
+# qual contexto seria injetado para esta tarefa?
+```
+
+O `explain` é a ferramenta de auditoria do compilador. Quando o CLAUDE.md gerado contém algo inesperado, o `explain` permite rastrear de onde veio.
+
+### /maes-context-add: capturar regras via agente externo
+
+Em vez de editar `.maes/context/human/*.md` à mão, use o slash command `/maes-context-add` instalado por `maes init` no seu cliente de IA. O agente extrai regras de texto livre, arquivos ou docs existentes, roteia para o arquivo `human/*.md` correto e aplica dedup semântico. Depois rode `maes sync` para compilar.
+
+### /maes-eval: medir impacto do contexto (agente externo)
+
+Invoque o agente `maes-eval` no seu cliente de IA para rodar a suite de avaliação (use `/maes-eval` no Claude Code; nos demais clientes descreva a tarefa — o contexto do agente é aplicado automaticamente):
+
+```
+/maes-eval
+/maes-eval --scenario auth-001
+/maes-eval --agent maes-review
+```
+
+O agente usa LLM-as-judge para comparar o output com e sem contexto MAES ativo em cenários predefinidos. Passa quando ≥ 70% dos cenários mostram delta positivo. Usa o provider do próprio cliente de IA — sem API key adicional. Limite recomendado: ~10 cenários por sessão.
+
+### Serve: MCP server
+
+```bash
+maes serve
+# Inicia MCP server na porta padrão
+# Expõe: maes_get_agent_context, maes_check_guard, maes_list_agents
+# Lê de synthesis/ — não requer API key em runtime
+```
+
+## Providers de LLM (apenas para scripts de CI)
+
+O core CLI MAES é 100% determinístico. Os agentes externos (`/maes-analyze`,
+`/maes-context-add`, `/maes-eval`) usam o provider do próprio cliente de IA —
+não precisam de nenhuma variável adicional.
+
+Para os scripts de CI que rodam em GitHub Actions, configure uma das variáveis
+abaixo como secrets no repositório:
+
+```bash
+# Anthropic Claude (recomendado para CI)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# GitHub Models / Copilot
+GITHUB_TOKEN=ghp_...  # disponível automaticamente nos Actions
+
+# Google Gemini
+GEMINI_API_KEY=AIza...
+```
+
+## Referência completa
+
+Para a referência detalhada de cada comando com todas as flags, exemplos de output e casos de uso — ver [Referência do CLI](/docs/cli/reference).
+
+Para os scripts de CI que complementam o CLI em GitHub Actions — ver [Scripts de CI](/docs/ci/scripts) e [GitHub Actions](/docs/ci/github-actions).

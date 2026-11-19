@@ -1,0 +1,105 @@
+---
+title: Release Notes
+description: O que mudou em cada versão do MAES — recursos, correções e o que você precisa fazer para atualizar.
+---
+
+Esta página acompanha o que mudou em cada versão do MAES, na ótica de quem usa. Para o detalhe
+técnico de cada release, veja `docs/releases/` no repositório do framework; para o histórico
+completo, o `CHANGELOG.md`.
+
+Como ler: **Recursos** é o que passou a existir, **Correções** é o que estava errado, e
+**Atualização** é o que você precisa rodar. Quando uma versão exige mais do que `maes upgrade`, isso
+está dito explicitamente.
+
+---
+
+## v1.4.0 — 2026-08-03
+
+Duas frentes: o Blueprint deixa de ser catálogo e passa a ser **contrato inicial de engenharia**, e o
+Analyze tem corrigida uma falha que fazia o mapa de arquitetura **encolher** conforme o projeto
+crescia.
+
+<Callout type="info">
+Esta versão acumula também o conteúdo da v1.3.0, que foi documentada mas nunca publicada — a
+distribuição via `pip install maes[all]` estreia aqui.
+</Callout>
+
+### Recursos
+
+**Blueprint como Contrato Inicial de Engenharia.** Ao criar um projeto novo, o Blueprint não entrega
+só stack e bootstrap: ele **semeia o conhecimento arquitetural da organização** no projeto —
+convenções, boundaries, onde cada tipo de código deve nascer, nomenclatura, decisões e padrões de
+teste. O efeito prático é que meses depois a IA continua sabendo responder "onde eu crio um módulo
+Financeiro?" e "quais boundaries eu nunca quebro?", porque esse conhecimento passou a pertencer ao
+projeto em vez de ficar na cabeça de quem criou.
+
+Geração de código continua com as ferramentas oficiais de cada ecossistema — o Blueprint não é um
+scaffolder.
+
+**Catálogo com 4 aplicações homologadas.** `maes blueprint list` agora oferece `fastapi-api`,
+`nestjs-api`, `nextjs-web` e `react-spa`, cada uma levantada por engenharia reversa de um projeto
+real.
+
+**Instalação sem clonar o repositório.** `pip install maes[all]` a partir do CodeArtifact, depois de
+`aws sso login` e `aws codeartifact login --tool pip`.
+
+### Correções
+
+**O mapa de arquitetura enxergava só uma fração do projeto.** Num workspace de 941 arquivos de fonte,
+o mapa descrevia 22 nós e reportava 60,5% de cobertura — cobertura calculada sobre a própria amostra,
+não sobre o projeto. Depois da correção: **151 nós** e o denominador real.
+
+**Projetos frontend apareciam vazios.** Arquivos `.tsx`, `.jsx`, `.vue` e `.svelte` nunca eram
+coletados, então um projeto React ou Next não gerava nó nenhum e o mapa se declarava
+`is_frontend_project: false`. Agora o frontend aparece — no caso validado, 18 nós que antes eram zero.
+
+**Workspaces multirepo não eram reconhecidos.** Quando o `.maes/` fica na raiz de um workspace e os
+repositórios são subdiretórios, nenhum `package.json` era encontrado e a detecção de framework falhava
+silenciosamente. Manifestos passam a ser procurados nos subprojetos.
+
+**O Code Placement no `CLAUDE.md` podia orientar errado.** A seção chegou a afirmar
+`Service → <raiz do repositório>` com 100% de confiança, apontando o diretório inteiro do repositório
+como o lugar de nascer um Service. Agora um prefixo genérico demais é rebaixado ou descartado, e
+quando não há evidência suficiente a seção é **omitida** em vez de emitir um palpite.
+
+### O que passou a ser visível
+
+O `architecture_map.json` (schema **2.1**) informa quanto do projeto foi efetivamente lido:
+
+- `sampling_ratio` — quantos arquivos de fonte tiveram o conteúdo lido, sobre o total. Em projetos
+  grandes esse número é naturalmente baixo, e isso é esperado: a estrutura é completa, o conteúdo é
+  amostrado.
+- `files_sampled` por nó, ao lado de `file_count` — quando um nó marca `files_sampled: 0`, campos como
+  `entry_points` estarem vazios significa "não foi lido", **não** "não existe".
+- O funil `source_files → candidate_count → collapsed_count → node_count`, que mostra como os arquivos
+  do projeto viraram nós do mapa.
+
+<Callout type="warn">
+`is_frontend_project: false` junto de `project_roots_truncated: true` **não** significa que o projeto
+não tem frontend — significa que não foi encontrado manifesto de frontend entre os subprojetos
+analisados.
+</Callout>
+
+### Atualização
+
+```bash
+maes upgrade
+maes build-arch-map
+maes sync
+```
+
+Os três passos são necessários, nesta ordem. Depois do `maes upgrade`, a seção `## Code Placement` fica
+**temporariamente ausente** do `CLAUDE.md` — o mapa antigo foi construído sobre uma amostra e não
+sustenta uma afirmação de convenção, então ela é omitida em vez de reemitida errada. O
+`maes build-arch-map` regenera o mapa e o `maes sync` traz a seção de volta, agora com lastro. O
+próprio `maes upgrade` avisa disso ao terminar, e `maes doctor` sinaliza se o mapa está em schema
+anterior.
+
+Nenhuma migração é necessária: `context/inferred/` e `synthesis/` são regenerados por inteiro.
+
+---
+
+## Versões anteriores
+
+O histórico completo, incluindo as versões anteriores à v1.4.0, está no
+`CHANGELOG.md` do repositório do framework. As notas técnicas por versão ficam em `docs/releases/`.

@@ -1,0 +1,177 @@
+---
+title: "Convenções do MAES"
+description: "Nomeação de tasks, decisões e conflitos; estrutura de arquivos human/; convenções de path do .maes/."
+---
+
+## Nomeação de Tasks
+
+**Formato:** `TASK-NNN` (zero-padded, sequencial)
+
+**Exemplos:** `TASK-001`, `TASK-042`, `TASK-100`
+
+**Arquivo:** `.maes/tasks/TASK-NNN.md`
+
+**Regras:**
+
+- Sequencial por projeto — não resete entre releases
+- Zero-padded até 3 dígitos (use 4 quando maior que 999: `TASK-1000`)
+- Use o mesmo número em: task file, branch, PR title e commits
+
+O ID no título do PR (`[TASK-042] Implementar endpoint de faturamento`) ativa o eval automático no GitHub Actions (workflow `maes-eval.yml`), que localiza o task file `.maes/tasks/TASK-042.md` para usar como referência ao avaliar o diff.
+
+---
+
+## Nomeação de Decisões Arquiteturais
+
+**Formato:** `DEC-NNN` registrado em `.maes/context/human/decisions.md`
+
+**Exemplos:** `DEC-001`, `DEC-012`
+
+**Template de entrada:**
+
+```markdown
+## DEC-001 — [Título curto da decisão]
+
+**Data:** YYYY-MM-DD
+**Decisão:** [O que foi decidido — uma frase]
+**Motivo:** [Por que esta opção foi escolhida]
+**Alternativas rejeitadas:** [O que foi considerado e descartado, e por quê]
+**Consequências:** [O que muda, o que fica mais difícil, o que fica mais fácil]
+```
+
+**Quando criar:**
+
+- Qualquer escolha de stack não-óbvia
+- Quando uma abordagem foi considerada e descartada (para não ser proposta de novo)
+- Quando uma decisão anterior é revisada
+
+Após adicionar uma entrada em `decisions.md`, execute `maes sync` para recompilar o contexto. A nova decisão será incorporada às assertions de layer 4 (Architecture).
+
+---
+
+## Nomeação de Conflitos
+
+**Formato:** `CONFLICT-NNN` gerado automaticamente pelo compilador
+
+**Exemplos:** `CONFLICT-001`, `CONFLICT-007`
+
+Conflitos são criados pelo estágio CONFLICT do pipeline quando o compilador detecta assertions contraditórias entre layers. O ID é gerado automaticamente e registrado em `synthesis/conflicts.json`. Para inspecionar um conflito específico:
+
+```bash
+maes explain conflict --id CONFLICT-001
+```
+
+Conflitos com status `UNRESOLVED` bloqueiam CI. Para resolver, edite os arquivos `human/` conflitantes, alinhe o conteúdo e execute `maes sync`. Não edite `synthesis/conflicts.json` diretamente.
+
+---
+
+## Arquivos Fixos de human/
+
+O diretório `.maes/context/human/` contém exatamente 5 arquivos com nomes fixos. Não crie arquivos com outros nomes neste diretório — o compilador reconhece apenas estes:
+
+| Arquivo             | Layer                         | Conteúdo                                                   |
+| ------------------- | ----------------------------- | ---------------------------------------------------------- |
+| `compliance.md`     | 1 e 2 (Compliance + Security) | Requisitos legais, PII, auditoria, restrições de segurança |
+| `integrations.md`   | 3 (Contracts)                 | Contratos com sistemas externos, APIs de terceiros, SLAs   |
+| `decisions.md`      | 4 (Architecture)              | ADRs no formato DEC-NNN, decisões técnicas significativas  |
+| `business-rules.md` | 5 (Domain)                    | Invariantes de domínio, regras de negócio invioláveis      |
+| `principles.md`     | 6 (Engineering)               | Padrões de engenharia do time, convenções de código        |
+
+O compilador lê estes arquivos durante o estágio INGEST e os associa automaticamente à layer correta com base no nome do arquivo.
+
+---
+
+## Estrutura de Paths do .maes/
+
+```
+.maes/
+├── config.yaml               ← Configuração do projeto
+├── OWNERSHIP.yaml            ← Responsáveis por layer
+├── context/
+│   ├── human/                ← Editado pelo time (5 arquivos fixos)
+│   │   ├── compliance.md
+│   │   ├── integrations.md
+│   │   ├── decisions.md
+│   │   ├── business-rules.md
+│   │   └── principles.md
+│   └── inferred/             ← Gerado por /maes-analyze (agente externo, nunca editar)
+│       ├── gaps.json
+│       ├── patterns.json
+│       ├── data-model.json
+│       ├── stack.json
+│       └── modules.json
+├── agents/                   ← Definições de agentes (gerado por maes init)
+├── tasks/                    ← Task files no formato TASK-NNN.md
+├── evals/
+│   ├── scenarios/            ← Cenários .eval.yaml criados pelo time
+│   └── results/              ← Resultados salvos pelo agent /maes-eval (com aprovação)
+└── synthesis/                ← Gerado por maes sync (nunca editar)
+    ├── assertions.json
+    ├── guards.json
+    ├── anti-hallucination.json
+    ├── conflicts.json
+    └── staleness.json
+```
+
+**Regra de ouro:** Apenas `human/` e `tasks/` e `evals/scenarios/` são editados manualmente. Todo o resto é gerado pelo compilador.
+
+---
+
+## Estrutura de Task Files
+
+**Nomeação:** `TASK-NNN.md` em `.maes/tasks/`
+
+**Status válidos:**
+
+- `Backlog` — criada, não iniciada
+- `Em progresso` — desenvolvimento ativo
+- `Em revisão` — PR aberto, aguardando review
+- `Concluído` — merged e contexto atualizado
+
+**Tipos válidos:**
+
+- `Feature` — nova funcionalidade
+- `Bug` — correção de bug
+- `Refactor` — melhoria sem mudança de comportamento
+- `Performance` — melhoria de desempenho
+- `Security` — correção ou melhoria de segurança
+- `Docs` — atualização de documentação
+- `Chore` — manutenção, deps, CI
+
+Task files são usados por `maes explain context --task` (para gerar a explicação do contexto relevante à task) e pelo eval de PR em CI (`eval-pr.py --task`, como referência ao pontuar o diff). Cenários de eval são arquivos `.eval.yaml` separados, não task files.
+
+---
+
+## OWNERSHIP.yaml
+
+**Path:** `.maes/OWNERSHIP.yaml`
+
+Este arquivo define os responsáveis por cada layer de contexto. É usado por `maes validate` para exibir o nome do owner quando uma layer apresenta staleness elevado.
+
+```yaml
+ownership:
+  layer_1_compliance: "Legal / Compliance Team"
+  layer_2_security: "Security Engineer"
+  layer_3_contracts: "Platform Team"
+  layer_4_architecture: "Tech Lead"
+  layer_5_domain: "Domain Squad Lead"
+  layer_6_engineering: "Tech Lead"
+  layer_7_inferred: "/maes-analyze (agente externo no cliente de IA)"
+```
+
+O OWNERSHIP.yaml não é prescritivo em relação à estrutura de squads — use os nomes que fazem sentido para o seu time.
+
+---
+
+## Staleness e Atualização
+
+Após editar qualquer arquivo em `human/`, execute `maes sync` para recompilar o contexto. O compilador recalcula os staleness scores e regenera os adapters (CLAUDE.md, .cursor/rules/, etc.).
+
+O comando `maes validate` verifica se o contexto está dentro dos thresholds de staleness configurados em `config.yaml` e se não há conflitos UNRESOLVED. Em CI, use este comando como gate:
+
+```yaml
+- name: Validate MAES context
+  run: maes validate
+```
+
+Se `maes validate` falhar, o output indica qual layer está em staleness crítico e quem é o owner responsável segundo `OWNERSHIP.yaml`.
